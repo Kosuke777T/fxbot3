@@ -1,0 +1,107 @@
+# FXBot3 デフォルト設定
+# ============================
+
+# アクティブな口座名（accounts セクションのキー）
+active_account: demo
+
+# 口座設定
+accounts:
+  demo:
+    server: "GaitameFinest-Demo"
+    login: 22004581           # MT5デモ口座番号
+    password: "eXSIDTUCV4&"        # MT5パスワード
+    type: demo          # demo | real
+
+  real:
+    server: "GaitameFinest-LIVE"
+    login: 3002973
+    password: "QpNa@w7s"
+    type: real
+
+# データ取得設定
+data:
+  # 基準時間足
+  base_timeframe: M5
+  # トレンド判断用の上位足
+  higher_timeframes:
+    - M15
+    - H1
+    - H4
+    - D1
+  # OHLCVバー取得本数
+  bars_count: 500000
+  # parquetキャッシュディレクトリ
+  cache_dir: "data/ohlcv"
+
+# 取引設定
+trading:
+  # 最大同時ポジション数
+  max_positions: 5
+  # 予測ホライゾン（何本先のリターンを予測するか）
+  prediction_horizon: 6
+  # 最小予測値閾値（この値未満では取引しない）
+  min_prediction_threshold: 0.0005
+  # 最大ロット
+  max_lot: 0.1
+  # 最小ロット
+  min_lot: 0.01
+
+# リスク管理
+risk:
+  # 1トレードあたりの最大リスク（残高に対する割合）
+  max_risk_per_trade: 0.02
+  # ATR SLの倍率
+  atr_sl_multiplier: 2.0
+  # ATR TPの倍率
+  atr_tp_multiplier: 3.0
+  # トレーリングストップのATR倍率
+  trailing_atr_multiplier: 1.5
+  # トレーリングストップの起動ATR倍率（含み益がこれを超えたら起動）
+  trailing_activation_atr: 1.0
+
+# モデル設定
+model:
+  # LightGBMパラメータ
+  lgbm_params:
+    objective: regression
+    metric: mae
+    boosting_type: gbdt
+    num_leaves: 63
+    learning_rate: 0.05
+    feature_fraction: 0.8
+    bagging_fraction: 0.8
+    bagging_freq: 5
+    verbose: -1
+  # 学習ラウンド数
+  num_boost_round: 1000
+  # Early stopping
+  early_stopping_rounds: 50
+  # SHAP特徴量選択の閾値（上位N%を残す）
+  shap_top_pct: 0.5
+  # モデル保存ディレクトリ
+  model_dir: "data/models"
+
+# バックテスト設定
+backtest:
+  # WFOの学習ウィンドウサイズ（日数）
+  train_window_days: 180
+  # WFOのテストウィンドウサイズ（日数）
+  test_window_days: 30
+  # 初期残高
+  initial_balance: 1000000
+  # スプレッド（pips）
+  spread_pips: 1.5
+
+# 自動再学習
+retraining:
+  # 自動再学習を有効にするか
+  enabled: false
+  # 再学習間隔（時間）
+  interval_hours: 168  # 1週間
+
+# ログ設定
+logging:
+  level: INFO
+  file: "data/fxbot.log"
+  max_bytes: 10485760  # 10MB
+  backup_count: 3

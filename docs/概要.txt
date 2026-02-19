@@ -1,0 +1,52 @@
+
+● Bash(find D:/fxbot3/src D:/fxbot3/tests D:/fxbot3/config -type 
+      f | sort)
+  ⎿  D:/fxbot3/config/default_settings.yaml
+     D:/fxbot3/src/fxbot/__init__.py
+     D:/fxbot3/src/fxbot/__main__.py
+     … +33 lines (ctrl+o to expand)
+
+● 全7フェーズの実装が完了しました。プロジェクト構成のサマリ:     
+
+  Phase 1: プロジェクト基盤 + MT5接続
+  - pyproject.toml, config/default_settings.yaml, config.py,     
+  logger.py
+  - mt5/connection.py, mt5/symbols.py, mt5/data_feed.py
+  - app.py — CLI(--cli)とGUIの両モード対応
+
+  Phase 2: 特徴量エンジニアリング
+  - features/ — trend, momentum, volatility, price_action,       
+  volume, temporal
+  - features/builder.py —
+  pd.merge_asof(direction='backward')でマルチTFアライメント      
+
+  Phase 3: LightGBM + SHAP
+  - model/trainer.py — y = log(close[t+N] / close[t]) の回帰学習 
+  - model/predictor.py, model/shap_analysis.py, model/registry.py
+
+  Phase 4: バックテスト + WFO
+  - backtest/engine.py —
+  バー単位シミュレーション（3層ストップ対応）
+  - backtest/wfo.py — ローリングウィンドウ WFO
+  - backtest/metrics.py — Sharpe, Sortino, DD, 勝率, PF
+
+  Phase 5: リスク管理 + 注文執行
+  - risk/position_sizer.py — 予測値ベース可変ロット
+  - risk/stop_manager.py — ATR/予測値/トレーリング3層
+  - mt5/execution.py — 注文送信・変更・決済
+  - strategy/signal.py — 予測→TradeSignal変換
+
+  Phase 6: GUI (PySide6)
+  - 5タブ: ダッシュボード, モデル, バックテスト, SHAP, 設定      
+  - デモ/リアル口座切替（リアル選択時に確認ダイアログ,
+  ステータスバー色分け）
+  - matplotlibチャート埋め込み, ログウィジェット
+
+  Phase 7: ライブ取引統合
+  - TradingWorker — M5バー確定ごとに予測→取引→トレーリング更新   
+  - 取引開始/停止ボタン、自動再学習スケジューラ
+  - エラーハンドリング・再接続ロジック
+
+  起動方法:
+  - GUI: uv run python -m fxbot.app
+  - CLI: uv run python -m fxbot.app --cli

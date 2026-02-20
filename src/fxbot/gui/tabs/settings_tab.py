@@ -5,7 +5,8 @@ from __future__ import annotations
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QLabel, QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox,
-    QPushButton, QMessageBox, QListWidget, QAbstractItemView,
+    QPushButton, QMessageBox, QListWidget, QAbstractItemView, QCheckBox,
+    QTabWidget,
 )
 from PySide6.QtCore import Signal, QTimer
 
@@ -29,7 +30,24 @@ class SettingsTab(QWidget):
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
 
-        # === 口座設定 ===
+        sub_tabs = QTabWidget()
+        sub_tabs.addTab(self._build_account_tab(), "口座")
+        sub_tabs.addTab(self._build_trading_tab(), "取引・リスク")
+        sub_tabs.addTab(self._build_model_tab(), "モデル")
+        sub_tabs.addTab(self._build_log_tab(), "ログ")
+        main_layout.addWidget(sub_tabs)
+
+        save_btn = QPushButton("設定保存")
+        save_btn.clicked.connect(self._save_settings)
+        main_layout.addWidget(save_btn)
+
+    # ---- サブタブ構築 ----
+
+    def _build_account_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+
+        # 口座設定
         account_group = QGroupBox("口座設定")
         account_layout = QFormLayout()
 
@@ -57,9 +75,27 @@ class SettingsTab(QWidget):
         account_layout.addRow(self.switch_btn)
 
         account_group.setLayout(account_layout)
-        main_layout.addWidget(account_group)
+        layout.addWidget(account_group)
 
-        # === 取引設定 ===
+        # 発注テスト
+        test_group = QGroupBox("発注テスト")
+        test_layout = QVBoxLayout()
+
+        self.test_order_btn = QPushButton("発注テスト（USDJPY 最小ロット）")
+        self.test_order_btn.clicked.connect(self._on_test_order)
+        test_layout.addWidget(self.test_order_btn)
+
+        test_group.setLayout(test_layout)
+        layout.addWidget(test_group)
+
+        layout.addStretch()
+        return page
+
+    def _build_trading_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+
+        # 取引設定
         trading_group = QGroupBox("取引設定")
         trading_layout = QFormLayout()
 
@@ -84,9 +120,9 @@ class SettingsTab(QWidget):
         trading_layout.addRow("最大ロット:", self.max_lot_spin)
 
         trading_group.setLayout(trading_layout)
-        main_layout.addWidget(trading_group)
+        layout.addWidget(trading_group)
 
-        # === リスク設定 ===
+        # リスク管理
         risk_group = QGroupBox("リスク管理")
         risk_layout = QFormLayout()
 
@@ -109,25 +145,87 @@ class SettingsTab(QWidget):
         risk_layout.addRow("ATR TP倍率:", self.atr_tp_spin)
 
         risk_group.setLayout(risk_layout)
-        main_layout.addWidget(risk_group)
+        layout.addWidget(risk_group)
 
-        # === 発注テスト ===
-        test_group = QGroupBox("発注テスト")
-        test_layout = QVBoxLayout()
+        layout.addStretch()
+        return page
 
-        self.test_order_btn = QPushButton("発注テスト（USDJPY 最小ロット）")
-        self.test_order_btn.clicked.connect(self._on_test_order)
-        test_layout.addWidget(self.test_order_btn)
+    def _build_model_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
 
-        test_group.setLayout(test_layout)
-        main_layout.addWidget(test_group)
+        # モデル設定
+        model_group = QGroupBox("モデル設定")
+        model_layout = QFormLayout()
 
-        # 保存ボタン
-        save_btn = QPushButton("設定保存")
-        save_btn.clicked.connect(self._save_settings)
-        main_layout.addWidget(save_btn)
+        self.model_mode_combo = QComboBox()
+        self.model_mode_combo.addItems(["regression", "classification"])
+        self.model_mode_combo.setToolTip(
+            "regression: 対数リターン予測（デフォルト）\n"
+            "classification: Triple Barrier勝率重視"
+        )
+        model_layout.addRow("学習モード:", self.model_mode_combo)
 
-        main_layout.addStretch()
+        self.min_confidence_spin = QDoubleSpinBox()
+        self.min_confidence_spin.setDecimals(2)
+        self.min_confidence_spin.setRange(0.0, 1.0)
+        self.min_confidence_spin.setSingleStep(0.05)
+        self.min_confidence_spin.setToolTip("0.0=無効 / 分類モード推奨値: 0.55")
+        model_layout.addRow("最低信頼度 (分類):", self.min_confidence_spin)
+
+        model_group.setLayout(model_layout)
+        layout.addWidget(model_group)
+
+        # 市場環境フィルター
+        mf_group = QGroupBox("市場環境フィルター（勝率向上）")
+        mf_layout = QFormLayout()
+
+        self.mf_enabled_check = QCheckBox("フィルターを有効にする")
+        mf_layout.addRow(self.mf_enabled_check)
+
+        self.mf_min_adx_spin = QDoubleSpinBox()
+        self.mf_min_adx_spin.setDecimals(1)
+        self.mf_min_adx_spin.setRange(5.0, 50.0)
+        self.mf_min_adx_spin.setSingleStep(5.0)
+        self.mf_min_adx_spin.setToolTip("ADXがこの値未満はレンジ相場としてHOLD")
+        mf_layout.addRow("最小ADX (トレンド判定):", self.mf_min_adx_spin)
+
+        self.mf_max_spread_spin = QDoubleSpinBox()
+        self.mf_max_spread_spin.setDecimals(1)
+        self.mf_max_spread_spin.setRange(0.5, 10.0)
+        self.mf_max_spread_spin.setSingleStep(0.5)
+        self.mf_max_spread_spin.setToolTip("スプレッドがこれを超えたらHOLD (pips)")
+        mf_layout.addRow("最大スプレッド (pips):", self.mf_max_spread_spin)
+
+        self.mf_session_check = QCheckBox("ロンドン・NYセッションのみ取引")
+        self.mf_session_check.setToolTip("ロンドン7-16 UTC、NY 13-22 UTC")
+        mf_layout.addRow(self.mf_session_check)
+
+        mf_group.setLayout(mf_layout)
+        layout.addWidget(mf_group)
+
+        layout.addStretch()
+        return page
+
+    def _build_log_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+
+        tl_group = QGroupBox("取引ログ（勝率分析）")
+        tl_layout = QFormLayout()
+
+        self.tl_enabled_check = QCheckBox("取引ログを有効にする")
+        tl_layout.addRow(self.tl_enabled_check)
+
+        self.tl_db_path_edit = QLineEdit()
+        self.tl_db_path_edit.setToolTip("プロジェクトルートからの相対パス")
+        tl_layout.addRow("DB保存パス:", self.tl_db_path_edit)
+
+        tl_group.setLayout(tl_layout)
+        layout.addWidget(tl_group)
+
+        layout.addStretch()
+        return page
 
     def _load_settings(self):
         s = self.settings
@@ -142,6 +240,22 @@ class SettingsTab(QWidget):
         self.risk_per_trade_spin.setValue(s.risk.max_risk_per_trade)
         self.atr_sl_spin.setValue(s.risk.atr_sl_multiplier)
         self.atr_tp_spin.setValue(s.risk.atr_tp_multiplier)
+
+        # モデル設定
+        mode_idx = self.model_mode_combo.findText(s.model.mode)
+        if mode_idx >= 0:
+            self.model_mode_combo.setCurrentIndex(mode_idx)
+        self.min_confidence_spin.setValue(s.trading.min_confidence)
+
+        # 市場フィルター
+        self.mf_enabled_check.setChecked(s.market_filter.enabled)
+        self.mf_min_adx_spin.setValue(s.market_filter.min_adx)
+        self.mf_max_spread_spin.setValue(s.market_filter.max_spread_pips)
+        self.mf_session_check.setChecked(s.market_filter.session_only)
+
+        # 取引ログ
+        self.tl_enabled_check.setChecked(s.trade_logging.enabled)
+        self.tl_db_path_edit.setText(s.trade_logging.db_path)
 
     def _update_account_fields(self, name: str):
         acc = self.settings.accounts.get(name)
@@ -197,10 +311,21 @@ class SettingsTab(QWidget):
         s.trading.prediction_horizon = self.prediction_horizon_spin.value()
         s.trading.min_prediction_threshold = self.min_threshold_spin.value()
         s.trading.max_lot = self.max_lot_spin.value()
+        s.trading.min_confidence = self.min_confidence_spin.value()
 
         s.risk.max_risk_per_trade = self.risk_per_trade_spin.value()
         s.risk.atr_sl_multiplier = self.atr_sl_spin.value()
         s.risk.atr_tp_multiplier = self.atr_tp_spin.value()
+
+        s.model.mode = self.model_mode_combo.currentText()
+
+        s.market_filter.enabled = self.mf_enabled_check.isChecked()
+        s.market_filter.min_adx = self.mf_min_adx_spin.value()
+        s.market_filter.max_spread_pips = self.mf_max_spread_spin.value()
+        s.market_filter.session_only = self.mf_session_check.isChecked()
+
+        s.trade_logging.enabled = self.tl_enabled_check.isChecked()
+        s.trade_logging.db_path = self.tl_db_path_edit.text()
 
         self.settings_changed.emit()
         log.info("設定保存完了")

@@ -146,14 +146,30 @@ class ModelTab(QWidget):
             return
 
         metrics = result["metrics"]
+        mode = result.get("mode", "regression")
         self.status_label.setText("学習完了")
-        self.metrics_label.setText(
-            f"MAE: {metrics['mae']:.6f}\n"
-            f"方向精度: {metrics['direction_accuracy']:.4f}\n"
-            f"IC: {metrics['information_coefficient']:.4f}\n"
-            f"特徴量数: {metrics['num_features']}\n"
-            f"保存先: {result['model_dir']}"
-        )
+
+        if mode == "classification":
+            per_class = metrics.get("per_class", {})
+            up_prec = per_class.get("up", {}).get("precision", 0)
+            down_prec = per_class.get("down", {}).get("precision", 0)
+            self.metrics_label.setText(
+                f"モード: 分類（Triple Barrier）\n"
+                f"精度: {metrics.get('accuracy', 0):.4f}\n"
+                f"方向精度: {metrics.get('direction_accuracy', 0):.4f}\n"
+                f"UP適合率: {up_prec:.4f} / DOWN適合率: {down_prec:.4f}\n"
+                f"特徴量数: {metrics.get('num_features', 0)}\n"
+                f"保存先: {result['model_dir']}"
+            )
+        else:
+            self.metrics_label.setText(
+                f"モード: 回帰\n"
+                f"MAE: {metrics.get('mae', 0):.6f}\n"
+                f"方向精度: {metrics.get('direction_accuracy', 0):.4f}\n"
+                f"IC: {metrics.get('information_coefficient', 0):.4f}\n"
+                f"特徴量数: {metrics.get('num_features', 0)}\n"
+                f"保存先: {result['model_dir']}"
+            )
 
         self._refresh_models()
 

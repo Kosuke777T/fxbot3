@@ -10,6 +10,7 @@ from fxbot.features.volatility import add_volatility_features
 from fxbot.features.price_action import add_price_action_features
 from fxbot.features.volume import add_volume_features
 from fxbot.features.temporal import add_temporal_features
+from fxbot.features.regime import add_regime_features
 from fxbot.logger import get_logger
 
 log = get_logger(__name__)
@@ -21,6 +22,7 @@ _FEATURE_FUNCS = [
     add_volatility_features,
     add_price_action_features,
     add_volume_features,
+    add_regime_features,
 ]
 
 

@@ -99,8 +99,48 @@ class DashboardTab(QWidget):
         pred_group.setLayout(pred_layout)
         layout.addWidget(pred_group)
 
+        # === 取引パフォーマンス（TradeLogger連携）===
+        perf_group = QGroupBox("取引パフォーマンス（直近20件）")
+        perf_layout = QHBoxLayout()
+
+        self.win_rate_label = QLabel("勝率: ---")
+        self.win_rate_label.setStyleSheet("font-size: 14px; font-weight: bold;")
+        perf_layout.addWidget(self.win_rate_label)
+
+        self.avg_pnl_label = QLabel("平均損益: ---")
+        perf_layout.addWidget(self.avg_pnl_label)
+
+        self.sharpe_label = QLabel("Sharpe: ---")
+        perf_layout.addWidget(self.sharpe_label)
+
+        self.model_health_label = QLabel("モデル: ---")
+        self.model_health_label.setStyleSheet("font-size: 14px;")
+        perf_layout.addWidget(self.model_health_label)
+
+        perf_group.setLayout(perf_layout)
+        layout.addWidget(perf_group)
+
+        # === 取引履歴 ===
+        history_group = QGroupBox("取引履歴（直近10件）")
+        history_layout = QVBoxLayout()
+
+        self.trade_history_table = QTableWidget()
+        self.trade_history_table.setColumnCount(7)
+        self.trade_history_table.setHorizontalHeaderLabels([
+            "時刻", "シンボル", "方向", "ロット", "建値", "損益", "決済理由",
+        ])
+        self.trade_history_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch
+        )
+        self.trade_history_table.setMaximumHeight(200)
+        history_layout.addWidget(self.trade_history_table)
+
+        history_group.setLayout(history_layout)
+        layout.addWidget(history_group)
+
     def refresh_positions(self):
-        """ポジション情報を更新."""
+        """ポジション情報と取引ログを更新."""
+        self._refresh_trade_log()
         try:
             from fxbot.risk.portfolio import get_open_positions
             from fxbot.mt5.connection import get_account_info
@@ -137,6 +177,83 @@ class DashboardTab(QWidget):
 
         except Exception as e:
             log.debug(f"ポジション更新スキップ: {e}")
+
+    def _refresh_trade_log(self):
+        """取引ログからパフォーマンスを更新."""
+        if not self.settings.trade_logging.enabled:
+            return
+        try:
+            from fxbot.trade_logger import TradeLogger
+            from fxbot.model.monitor import ModelMonitor
+            db_path = self.settings.resolve_path(self.settings.trade_logging.db_path)
+            if not db_path.exists():
+                return
+            tl = TradeLogger(db_path)
+            rt_cfg = self.settings.retraining
+            monitor = ModelMonitor(
+                tl,
+                window=rt_cfg.monitor_window,
+                min_win_rate=rt_cfg.min_win_rate,
+                min_sharpe=rt_cfg.min_sharpe,
+            )
+            result = monitor.check()
+            m = result["metrics"]
+            tl.close()
+
+            # パフォーマンスラベル更新
+            count = m.get("count", 0)
+            if count > 0:
+                wr = m.get("win_rate", 0)
+                wr_color = "#4CAF50" if wr >= 0.5 else "#F44336"
+                self.win_rate_label.setText(f"勝率: {wr:.1%}")
+                self.win_rate_label.setStyleSheet(
+                    f"font-size: 14px; font-weight: bold; color: {wr_color};"
+                )
+                avg = m.get("avg_pnl", 0)
+                self.avg_pnl_label.setText(f"平均損益: {avg:+.0f}")
+                sh = m.get("sharpe", 0)
+                self.sharpe_label.setText(f"Sharpe: {sh:.2f}")
+
+                # モデル健全性
+                if result["healthy"]:
+                    self.model_health_label.setText("モデル: 正常")
+                    self.model_health_label.setStyleSheet(
+                        "font-size: 14px; color: #4CAF50;"
+                    )
+                else:
+                    warns = ", ".join(result["warnings"])
+                    self.model_health_label.setText(f"モデル: 要再学習 ({warns})")
+                    self.model_health_label.setStyleSheet(
+                        "font-size: 14px; color: #F44336;"
+                    )
+
+            # 取引履歴テーブル更新
+            tl2 = TradeLogger(db_path)
+            trades = tl2.get_recent_trades(10)
+            tl2.close()
+            self.trade_history_table.setRowCount(len(trades))
+            for i, t in enumerate(trades):
+                ts = (t.get("exit_time") or t.get("timestamp", ""))[:19]
+                self.trade_history_table.setItem(i, 0, QTableWidgetItem(ts))
+                self.trade_history_table.setItem(i, 1, QTableWidgetItem(t.get("symbol", "")))
+                self.trade_history_table.setItem(i, 2, QTableWidgetItem(t.get("direction", "").upper()))
+                self.trade_history_table.setItem(i, 3, QTableWidgetItem(f"{t.get('lot', 0):.2f}"))
+                self.trade_history_table.setItem(i, 4, QTableWidgetItem(f"{t.get('entry_price', 0):.5f}"))
+
+                pnl = t.get("pnl")
+                pnl_str = f"{pnl:+.0f}" if pnl is not None else "---"
+                pnl_item = QTableWidgetItem(pnl_str)
+                if pnl is not None:
+                    pnl_item.setForeground(
+                        QColor("#4CAF50") if pnl >= 0 else QColor("#F44336")
+                    )
+                self.trade_history_table.setItem(i, 5, pnl_item)
+                self.trade_history_table.setItem(
+                    i, 6, QTableWidgetItem(t.get("exit_reason") or "---")
+                )
+
+        except Exception as e:
+            log.debug(f"取引ログ更新スキップ: {e}")
 
     def update_predictions(self, predictions: dict[str, float]):
         """予測値を更新."""

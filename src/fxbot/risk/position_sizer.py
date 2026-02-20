@@ -16,6 +16,7 @@ def calculate_lot(
     atr: float,
     point: float,
     settings: Settings,
+    confidence: float = 1.0,
 ) -> float:
     """予測値・残高・ATRからロットサイズを計算.
 
@@ -24,6 +25,10 @@ def calculate_lot(
     2. SL距離 = ATR × atr_sl_multiplier
     3. ベースロット = リスク金額 / (SL距離 × contract_size)
     4. 予測値の大きさで調整（大きいほどロット増）
+    5. 信頼度でスケーリング（分類モデル使用時）
+
+    Args:
+        confidence: 分類モデルの信頼度 (0.0〜1.0)。デフォルト1.0で後方互換。
     """
     risk_cfg = settings.risk
     trading_cfg = settings.trading
@@ -47,7 +52,8 @@ def calculate_lot(
     scale = 1.0 + 0.5 * np.log1p(pred_abs / threshold - 1)
     scale = min(scale, 2.0)  # 最大2倍
 
-    lot = base_lot * scale
+    # 信頼度でロットスケーリング（高信頼度 → フルサイズ、低信頼度 → 縮小）
+    lot = base_lot * scale * confidence
     lot = max(trading_cfg.min_lot, min(trading_cfg.max_lot, lot))
     lot = round(lot, 2)
 

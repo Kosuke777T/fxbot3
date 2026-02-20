@@ -36,6 +36,7 @@ class TradingConfig:
     min_prediction_threshold: float = 0.0005
     max_lot: float = 0.1
     min_lot: float = 0.01
+    min_confidence: float = 0.0  # 分類モデルの最低信頼度（0.0=無効）
 
 
 @dataclass
@@ -64,6 +65,7 @@ class ModelConfig:
     early_stopping_rounds: int = 50
     shap_top_pct: float = 0.5
     model_dir: str = "data/models"
+    mode: str = "regression"  # "regression" | "classification"
 
 
 @dataclass
@@ -75,9 +77,28 @@ class BacktestConfig:
 
 
 @dataclass
+class TradeLoggingConfig:
+    enabled: bool = False
+    db_path: str = "data/trades.db"
+
+
+@dataclass
+class MarketFilterConfig:
+    """市場環境フィルター設定."""
+    enabled: bool = False
+    min_adx: float = 20.0          # この値未満のADX（弱トレンド）ではHOLD
+    max_spread_pips: float = 3.0   # スプレッドがこれを超えたらHOLD
+    session_only: bool = False     # Trueでロンドン・NYセッションのみ取引
+
+
+@dataclass
 class RetrainingConfig:
     enabled: bool = False
     interval_hours: int = 168
+    # ModelMonitorトリガー
+    monitor_window: int = 20       # 直近N件で監視
+    min_win_rate: float = 0.40     # 勝率がこれを下回ったら再学習
+    min_sharpe: float = 0.0        # シャープレシオがこれを下回ったら再学習
 
 
 @dataclass
@@ -102,6 +123,8 @@ class Settings:
     backtest: BacktestConfig = field(default_factory=BacktestConfig)
     retraining: RetrainingConfig = field(default_factory=RetrainingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    trade_logging: TradeLoggingConfig = field(default_factory=TradeLoggingConfig)
+    market_filter: MarketFilterConfig = field(default_factory=MarketFilterConfig)
 
     @property
     def current_account(self) -> AccountConfig:
@@ -158,6 +181,8 @@ def load_settings(path: Path | str | None = None) -> Settings:
         "backtest": (BacktestConfig, "backtest"),
         "retraining": (RetrainingConfig, "retraining"),
         "logging": (LoggingConfig, "logging"),
+        "trade_logging": (TradeLoggingConfig, "trade_logging"),
+        "market_filter": (MarketFilterConfig, "market_filter"),
     }
     for yaml_key, (cls, attr_name) in section_map.items():
         if yaml_key in raw:

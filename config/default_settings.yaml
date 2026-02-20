@@ -45,6 +45,8 @@ trading:
   max_lot: 0.1
   # 最小ロット
   min_lot: 0.01
+  # 分類モデルの最低信頼度（0.0=無効, 0.55推奨）
+  min_confidence: 0.0
 
 # リスク管理
 risk:
@@ -61,6 +63,9 @@ risk:
 
 # モデル設定
 model:
+  # 学習モード: "regression"（デフォルト）or "classification"（Triple Barrier）
+  # classificationはTriple Barrierラベルで勝率重視の学習を行う
+  mode: regression
   # LightGBMパラメータ
   lgbm_params:
     objective: regression
@@ -98,6 +103,28 @@ retraining:
   enabled: false
   # 再学習間隔（時間）
   interval_hours: 168  # 1週間
+  # ModelMonitor設定（勝率低下を検知して再学習をトリガー）
+  monitor_window: 20     # 直近N件のクローズ済みトレードで監視
+  min_win_rate: 0.40     # 勝率がこの値を下回ったら警告
+  min_sharpe: 0.0        # シャープレシオがこの値を下回ったら警告
+
+# 取引ログ設定
+trade_logging:
+  # SQLiteに取引記録を保存するか
+  enabled: false
+  # DBファイルパス（プロジェクトルートからの相対パス）
+  db_path: "data/trades.db"
+
+# 市場環境フィルター設定
+market_filter:
+  # フィルターを有効にするか（有効にすると勝率向上が見込めるがトレード数は減る）
+  enabled: false
+  # ADXがこの値未満（弱トレンド=レンジ相場）はHOLD
+  min_adx: 20.0
+  # スプレッドがこれを超えたらHOLD（pips）
+  max_spread_pips: 3.0
+  # Trueでロンドン(7-16UTC)・NY(13-22UTC)セッションのみ取引
+  session_only: false
 
 # ログ設定
 logging:

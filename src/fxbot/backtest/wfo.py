@@ -87,7 +87,10 @@ def run_wfo(
                  f"test {test_start.date()}~{test_end.date()} ===")
 
         # train/testデータ分割
-        train_data = feature_matrix[train_start:train_end]
+        # 学習データ末尾からhorizonバー分を除去（purge）
+        # ターゲット(close.shift(-horizon))がテスト期間の価格を参照する問題を防止
+        horizon = settings.trading.prediction_horizon
+        train_data = feature_matrix[train_start:train_end].iloc[:-horizon]
         test_data = feature_matrix[test_start:test_end]
 
         if len(train_data) < 100 or len(test_data) < 10:
@@ -95,14 +98,17 @@ def run_wfo(
             cursor += pd.Timedelta(days=test_days)
             continue
 
+        # モデルモード（設定から取得）
+        model_mode = getattr(settings.model, "mode", "regression")
+
         # 1. 全特徴量で学習
         horizon = settings.trading.prediction_horizon
-        X_train, y_train, feat_names = prepare_dataset(train_data, horizon)
+        X_train, y_train, feat_names = prepare_dataset(train_data, horizon, mode=model_mode)
         if len(X_train) < 100:
             cursor += pd.Timedelta(days=test_days)
             continue
 
-        model_full, _ = train_model(X_train, y_train, settings)
+        model_full, _ = train_model(X_train, y_train, settings, mode=model_mode)
 
         # 2. SHAP特徴量選択
         selected, _ = select_features(
@@ -111,12 +117,17 @@ def run_wfo(
         )
 
         # 3. 選択された特徴量で再学習
-        X_train_sel, y_train_sel, _ = prepare_dataset(train_data, horizon, selected)
-        model, train_metrics = train_model(X_train_sel, y_train_sel, settings)
+        X_train_sel, y_train_sel, _ = prepare_dataset(train_data, horizon, selected, mode=model_mode)
+        model, train_metrics = train_model(X_train_sel, y_train_sel, settings, mode=model_mode)
 
         # 4. テスト期間で予測
-        predictor = Predictor(model, selected)
-        predictions = predictor.predict(test_data)
+        predictor = Predictor(model, selected, mode=model_mode)
+        if model_mode == "classification":
+            pred_df = predictor.predict_with_confidence(test_data)
+            # direction: 1(up)→正, -1(down)→負、confidenceで重み付け
+            predictions = pred_df["direction"].astype(float) * pred_df["confidence"]
+        else:
+            predictions = predictor.predict(test_data)
 
         # 5. バックテスト
         engine = BacktestEngine(settings)

@@ -29,7 +29,7 @@ data:
     - H4
     - D1
   # OHLCVバー取得本数
-  bars_count: 500000
+  bars_count: 10000
   # parquetキャッシュディレクトリ
   cache_dir: "data/ohlcv"
 
@@ -40,7 +40,7 @@ trading:
   # 予測ホライゾン（何本先のリターンを予測するか）
   prediction_horizon: 6
   # 最小予測値閾値（この値未満では取引しない）
-  min_prediction_threshold: 0.0005
+  min_prediction_threshold: 0.0002
   # 最大ロット
   max_lot: 0.1
   # 最小ロット

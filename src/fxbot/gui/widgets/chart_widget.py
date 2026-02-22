@@ -5,6 +5,15 @@ from __future__ import annotations
 import matplotlib
 matplotlib.use("QtAgg")
 
+import matplotlib.font_manager as _fm
+
+_JP_FONTS = ["Meiryo", "Yu Gothic", "MS Gothic", "IPAexGothic", "Noto Sans CJK JP"]
+_available = {f.name for f in _fm.fontManager.ttflist}
+for _font in _JP_FONTS:
+    if _font in _available:
+        matplotlib.rcParams["font.family"] = _font
+        break
+
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from matplotlib.ticker import FuncFormatter

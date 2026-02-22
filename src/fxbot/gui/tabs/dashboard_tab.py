@@ -215,7 +215,6 @@ class DashboardTab(QWidget):
             )
             result = monitor.check()
             m = result["metrics"]
-            tl.close()
 
             # パフォーマンスラベル更新
             count = m.get("count", 0)
@@ -244,10 +243,9 @@ class DashboardTab(QWidget):
                         "font-size: 14px; color: #F44336;"
                     )
 
-            # 取引履歴テーブル更新
-            tl2 = TradeLogger(db_path)
-            trades = tl2.get_recent_trades(10)
-            tl2.close()
+            # 取引履歴テーブル更新（同じ接続を再利用）
+            trades = tl.get_recent_trades(10)
+            tl.close()
             self.trade_history_table.setRowCount(len(trades))
             for i, t in enumerate(trades):
                 ts = (t.get("exit_time") or t.get("timestamp", ""))[:19]

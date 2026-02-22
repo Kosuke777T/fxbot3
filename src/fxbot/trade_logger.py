@@ -68,7 +68,7 @@ class TradeLogger:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute(_CREATE_TABLE)
         self._conn.commit()
-        log.info(f"TradeLogger初期化: {self.db_path}")
+        log.debug(f"TradeLogger初期化: {self.db_path}")
 
     def log_entry(self, record: TradeRecord) -> int:
         """エントリーを記録し、レコードIDを返す."""

@@ -77,12 +77,12 @@ def generate_signal(
     if mf.enabled:
         # レンジ相場フィルター
         if regime == "ranging":
-            log.info(f"レンジ相場でHOLD: {symbol} regime={regime}")
+            log.debug(f"レンジ相場でHOLD: {symbol} regime={regime}")
             return _make_hold(symbol, prediction)
 
         # スプレッドフィルター
         if spread_pips > mf.max_spread_pips:
-            log.info(f"スプレッド過大でHOLD: {symbol} spread={spread_pips:.1f}pips > {mf.max_spread_pips}")
+            log.debug(f"スプレッド過大でHOLD: {symbol} spread={spread_pips:.1f}pips > {mf.max_spread_pips}")
             return _make_hold(symbol, prediction)
 
         # ATR%ボラティリティフィルター（過小・過大ボラをHOLD）
@@ -91,11 +91,11 @@ def generate_signal(
             atr_pct = atr / current_price * 100
             # 過小ボラ: スプレッドコストに対して動きが小さすぎる（ATR% < 0.02%）
             if atr_pct < 0.02:
-                log.info(f"低ボラでHOLD: {symbol} ATR%={atr_pct:.4f}% < 0.02%")
+                log.debug(f"低ボラでHOLD: {symbol} ATR%={atr_pct:.4f}% < 0.02%")
                 return _make_hold(symbol, prediction)
             # 過大ボラ: 経済指標発表などの異常相場（ATR% > 0.5%）
             if atr_pct > 0.5:
-                log.info(f"過大ボラでHOLD: {symbol} ATR%={atr_pct:.4f}% > 0.5%")
+                log.debug(f"過大ボラでHOLD: {symbol} ATR%={atr_pct:.4f}% > 0.5%")
                 return _make_hold(symbol, prediction)
 
         # セッションフィルター（ロンドン7-16 UTC, NY13-22 UTC）
@@ -103,12 +103,12 @@ def generate_signal(
             in_london = 7 <= current_hour_utc < 16
             in_ny = 13 <= current_hour_utc < 22
             if not (in_london or in_ny):
-                log.info(f"セッション外でHOLD: {symbol} UTC={current_hour_utc}時")
+                log.debug(f"セッション外でHOLD: {symbol} UTC={current_hour_utc}時")
                 return _make_hold(symbol, prediction)
 
     # --- 信頼度チェック（分類モデル使用時）---
     if confidence < min_confidence:
-        log.info(f"信頼度不足でHOLD: {symbol} confidence={confidence:.4f} < {min_confidence}")
+        log.debug(f"信頼度不足でHOLD: {symbol} confidence={confidence:.4f} < {min_confidence}")
         return _make_hold(symbol, prediction)
 
     # --- 予測値閾値チェック ---

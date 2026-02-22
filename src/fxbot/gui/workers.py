@@ -314,6 +314,19 @@ class TradingWorker(QThread):
                         time.sleep(30)
                         continue
 
+                # セッション外スキップ（データ取得・特徴量構築・シグナル生成をすべてスキップ）
+                if (self.settings.market_filter.enabled
+                        and self.settings.market_filter.session_only):
+                    hour_utc = datetime.utcnow().hour
+                    in_session = (7 <= hour_utc < 16) or (13 <= hour_utc < 22)
+                    if not in_session:
+                        log.debug(f"セッション外スキップ (UTC={hour_utc}時) — 15分待機")
+                        for _ in range(900):
+                            if not self._running:
+                                break
+                            time.sleep(1)
+                        continue
+
                 for sym, (predictor, meta) in models.items():
                     try:
                         # クローズ検出: 前回あったチケットが消えた → exit記録

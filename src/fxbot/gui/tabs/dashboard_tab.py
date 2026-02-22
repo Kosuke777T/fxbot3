@@ -120,6 +120,22 @@ class DashboardTab(QWidget):
         perf_group.setLayout(perf_layout)
         layout.addWidget(perf_group)
 
+        # === 週末自動再学習結果 ===
+        retrain_group = QGroupBox("週末自動再学習（最終実行結果）")
+        retrain_layout = QHBoxLayout()
+
+        self.retrain_date_label = QLabel("最終実行: ---")
+        retrain_layout.addWidget(self.retrain_date_label)
+
+        self.retrain_wfo_label = QLabel("WFO: ---")
+        retrain_layout.addWidget(self.retrain_wfo_label)
+
+        self.retrain_status_label = QLabel("結果: ---")
+        retrain_layout.addWidget(self.retrain_status_label)
+
+        retrain_group.setLayout(retrain_layout)
+        layout.addWidget(retrain_group)
+
         # === 取引履歴 ===
         history_group = QGroupBox("取引履歴（直近10件）")
         history_layout = QVBoxLayout()
@@ -141,6 +157,7 @@ class DashboardTab(QWidget):
     def refresh_positions(self):
         """ポジション情報と取引ログを更新."""
         self._refresh_trade_log()
+        self.refresh_auto_retrain_result()
         try:
             from fxbot.risk.portfolio import get_open_positions
             from fxbot.mt5.connection import get_account_info
@@ -268,6 +285,38 @@ class DashboardTab(QWidget):
                 QColor("#4CAF50") if pred > 0 else QColor("#F44336") if pred < 0 else QColor("gray")
             )
             self.prediction_table.setItem(i, 2, dir_item)
+
+    def refresh_auto_retrain_result(self):
+        """logsディレクトリの最新 auto_retrain_*.json を読み込んで表示."""
+        import json
+        try:
+            log_dir = self.settings.resolve_path("logs")
+            if not log_dir.exists():
+                return
+            files = sorted(log_dir.glob("auto_retrain_*.json"))
+            if not files:
+                return
+            latest = files[-1]
+            with open(latest, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            ts = data.get("timestamp", "")[:19]
+            self.retrain_date_label.setText(f"最終実行: {ts}")
+
+            wr = data.get("wfo_win_rate", 0.0)
+            sh = data.get("wfo_sharpe", 0.0)
+            self.retrain_wfo_label.setText(f"WFO: 勝率{wr:.1%} / Sharpe{sh:.2f}")
+
+            trained = data.get("trained", False)
+            reason = data.get("reason", "")
+            if trained:
+                self.retrain_status_label.setText(f"結果: 学習済 ({reason})")
+                self.retrain_status_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
+            else:
+                self.retrain_status_label.setText(f"結果: スキップ ({reason})")
+                self.retrain_status_label.setStyleSheet("color: #FF9800;")
+        except Exception as e:
+            log.debug(f"自動再学習結果更新スキップ: {e}")
 
     def _on_close_all(self):
         from PySide6.QtWidgets import QMessageBox

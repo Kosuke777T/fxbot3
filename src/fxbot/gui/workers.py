@@ -20,6 +20,7 @@ class WorkerSignals(QObject):
     finished = Signal(object)  # result
     error = Signal(str)
     progress = Signal(str)
+    prediction = Signal(dict)  # {symbol: pred_val}
 
 
 class DataFetchWorker(QThread):
@@ -137,6 +138,98 @@ class BacktestWorker(QThread):
             self.signals.error.emit(f"バックテストエラー: {e}\n{traceback.format_exc()}")
 
 
+class WeekendRetrainWorker(QThread):
+    """週末自動WFO→学習ワーカー."""
+    signals = WorkerSignals()
+
+    def __init__(self, multi_tf_data: dict, symbol: str, settings: Settings, parent=None):
+        super().__init__(parent)
+        self.multi_tf_data = multi_tf_data
+        self.symbol = symbol
+        self.settings = settings
+
+    def run(self):
+        try:
+            self.signals.started.emit()
+            rt_cfg = self.settings.retraining
+
+            # Step 1: WFO実行
+            self.signals.progress.emit("週末自動再学習: WFO実行中...")
+            from fxbot.backtest.wfo import run_wfo
+            wfo_result = run_wfo(self.multi_tf_data, self.settings)
+            metrics = wfo_result.overall_metrics if hasattr(wfo_result, "overall_metrics") else {}
+
+            wfo_win_rate = metrics.get("win_rate", 0.0)
+            wfo_sharpe = metrics.get("sharpe", 0.0)
+            self.signals.progress.emit(
+                f"WFO完了: 勝率={wfo_win_rate:.1%} Sharpe={wfo_sharpe:.2f}"
+            )
+
+            # Step 2: 合格判定
+            ok = (wfo_win_rate >= rt_cfg.wfo_min_win_rate
+                  and wfo_sharpe >= rt_cfg.wfo_min_sharpe)
+
+            if not ok:
+                reason = (
+                    f"WFO基準未達 "
+                    f"(勝率{wfo_win_rate:.1%}<{rt_cfg.wfo_min_win_rate:.1%} "
+                    f"or Sharpe{wfo_sharpe:.2f}<{rt_cfg.wfo_min_sharpe:.2f})"
+                )
+                self.signals.progress.emit(f"週末自動再学習: {reason} → スキップ")
+                self.signals.finished.emit({
+                    "wfo_result": wfo_result,
+                    "wfo_win_rate": wfo_win_rate,
+                    "wfo_sharpe": wfo_sharpe,
+                    "trained": False,
+                    "reason": reason,
+                })
+                return
+
+            # Step 3: 学習実行（TrainWorkerと同じロジック）
+            self.signals.progress.emit("週末自動再学習: WFO合格 → 学習開始...")
+            from fxbot.features.builder import build_feature_matrix
+            from fxbot.model.trainer import prepare_dataset, train_model
+            from fxbot.model.shap_analysis import select_features
+            from fxbot.model.registry import save_model
+
+            model_mode = self.settings.model.mode
+            horizon = self.settings.trading.prediction_horizon
+
+            fm = build_feature_matrix(self.multi_tf_data, self.settings.data.base_timeframe)
+            self.signals.progress.emit(f"特徴量: {fm.shape[1]}列")
+
+            X, y, _ = prepare_dataset(fm, horizon, mode=model_mode)
+            self.signals.progress.emit("全特徴量で学習中...")
+            model_full, _ = train_model(X, y, self.settings, mode=model_mode)
+
+            self.signals.progress.emit("SHAP計算中...")
+            selected, importance_df = select_features(
+                model_full, X, top_pct=self.settings.model.shap_top_pct,
+            )
+
+            self.signals.progress.emit(f"選択特徴量で再学習中（{len(selected)}列）...")
+            X_sel, y_sel, _ = prepare_dataset(fm, horizon, selected, mode=model_mode)
+            model, train_metrics = train_model(X_sel, y_sel, self.settings, mode=model_mode)
+            train_metrics["mode"] = model_mode
+
+            tf = self.settings.data.base_timeframe
+            model_dir = save_model(model, selected, train_metrics, self.symbol, tf, self.settings)
+            self.signals.progress.emit(f"週末自動再学習完了: {model_dir}")
+
+            self.signals.finished.emit({
+                "wfo_result": wfo_result,
+                "wfo_win_rate": wfo_win_rate,
+                "wfo_sharpe": wfo_sharpe,
+                "trained": True,
+                "reason": "WFO合格",
+                "train_metrics": train_metrics,
+                "model_dir": str(model_dir),
+            })
+
+        except Exception as e:
+            self.signals.error.emit(f"週末自動再学習エラー: {e}\n{traceback.format_exc()}")
+
+
 class TradingWorker(QThread):
     """ライブ取引ワーカー — Phase 7で本実装."""
     signals = WorkerSignals()
@@ -214,6 +307,7 @@ class TradingWorker(QThread):
             prev_tickets: dict[str, set[int]] = {sym: set() for sym in models}
 
             while self._running:
+                predictions_this_bar: dict[str, float] = {}
                 if not is_connected():
                     self.signals.progress.emit("再接続中...")
                     if not reconnect(self.settings):
@@ -263,6 +357,8 @@ class TradingWorker(QThread):
                             pred_val = float(direction) * confidence  # 方向 × 信頼度を予測値として使用
                         else:
                             pred_val = predictor.predict_latest(fm)
+
+                        predictions_this_bar[sym] = pred_val
 
                         # シグナル生成
                         current_price = fm["close"].iloc[-1]
@@ -350,6 +446,10 @@ class TradingWorker(QThread):
 
                     except Exception as e:
                         log.error(f"取引ループエラー ({sym}): {e}")
+
+                # 予測値をダッシュボードに送信
+                if predictions_this_bar:
+                    self.signals.prediction.emit(predictions_this_bar)
 
                 # ModelMonitorチェック（取引ログが有効な場合）
                 if model_monitor and self.settings.retraining.enabled:

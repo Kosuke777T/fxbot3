@@ -204,6 +204,65 @@ class SettingsTab(QWidget):
         mf_group.setLayout(mf_layout)
         layout.addWidget(mf_group)
 
+        # 自動再学習スケジューラー
+        rt_group = QGroupBox("自動再学習スケジューラー")
+        rt_layout = QFormLayout()
+
+        self.rt_enabled_check = QCheckBox("自動再学習を有効にする")
+        rt_layout.addRow(self.rt_enabled_check)
+
+        self.rt_weekend_only_check = QCheckBox("土日のみ実行（週末スケジューラー）")
+        self.rt_weekend_only_check.setToolTip(
+            "有効: 土日のみ実行（毎時チェック）\n"
+            "無効: interval_hours間隔で実行"
+        )
+        rt_layout.addRow(self.rt_weekend_only_check)
+
+        self.rt_interval_spin = QSpinBox()
+        self.rt_interval_spin.setRange(1, 720)
+        self.rt_interval_spin.setSuffix(" 時間")
+        self.rt_interval_spin.setToolTip("週末モード無効時のみ有効")
+        rt_layout.addRow("実行間隔（週末オフ時）:", self.rt_interval_spin)
+
+        self.rt_wfo_check = QCheckBox("学習前にWFOを実行して合格判定")
+        rt_layout.addRow(self.rt_wfo_check)
+
+        self.rt_wfo_win_rate_spin = QDoubleSpinBox()
+        self.rt_wfo_win_rate_spin.setDecimals(2)
+        self.rt_wfo_win_rate_spin.setRange(0.0, 1.0)
+        self.rt_wfo_win_rate_spin.setSingleStep(0.05)
+        self.rt_wfo_win_rate_spin.setToolTip("WFOがこの勝率を下回ったら学習をスキップ")
+        rt_layout.addRow("WFO合格基準 勝率:", self.rt_wfo_win_rate_spin)
+
+        self.rt_wfo_sharpe_spin = QDoubleSpinBox()
+        self.rt_wfo_sharpe_spin.setDecimals(2)
+        self.rt_wfo_sharpe_spin.setRange(-5.0, 10.0)
+        self.rt_wfo_sharpe_spin.setSingleStep(0.1)
+        self.rt_wfo_sharpe_spin.setToolTip("WFOがこのシャープを下回ったら学習をスキップ")
+        rt_layout.addRow("WFO合格基準 Sharpe:", self.rt_wfo_sharpe_spin)
+
+        self.rt_monitor_window_spin = QSpinBox()
+        self.rt_monitor_window_spin.setRange(5, 200)
+        self.rt_monitor_window_spin.setSuffix(" 件")
+        rt_layout.addRow("監視ウィンドウ:", self.rt_monitor_window_spin)
+
+        self.rt_min_win_rate_spin = QDoubleSpinBox()
+        self.rt_min_win_rate_spin.setDecimals(2)
+        self.rt_min_win_rate_spin.setRange(0.0, 1.0)
+        self.rt_min_win_rate_spin.setSingleStep(0.05)
+        self.rt_min_win_rate_spin.setToolTip("劣化検知トリガー: 勝率がこれを下回ったら警告")
+        rt_layout.addRow("劣化検知 最低勝率:", self.rt_min_win_rate_spin)
+
+        self.rt_min_sharpe_spin = QDoubleSpinBox()
+        self.rt_min_sharpe_spin.setDecimals(2)
+        self.rt_min_sharpe_spin.setRange(-5.0, 10.0)
+        self.rt_min_sharpe_spin.setSingleStep(0.1)
+        self.rt_min_sharpe_spin.setToolTip("劣化検知トリガー: シャープがこれを下回ったら警告")
+        rt_layout.addRow("劣化検知 最低Sharpe:", self.rt_min_sharpe_spin)
+
+        rt_group.setLayout(rt_layout)
+        layout.addWidget(rt_group)
+
         layout.addStretch()
         return page
 
@@ -256,6 +315,18 @@ class SettingsTab(QWidget):
         # 取引ログ
         self.tl_enabled_check.setChecked(s.trade_logging.enabled)
         self.tl_db_path_edit.setText(s.trade_logging.db_path)
+
+        # 自動再学習
+        rt = s.retraining
+        self.rt_enabled_check.setChecked(rt.enabled)
+        self.rt_weekend_only_check.setChecked(rt.weekend_only)
+        self.rt_interval_spin.setValue(rt.interval_hours)
+        self.rt_wfo_check.setChecked(rt.run_wfo_before_train)
+        self.rt_wfo_win_rate_spin.setValue(rt.wfo_min_win_rate)
+        self.rt_wfo_sharpe_spin.setValue(rt.wfo_min_sharpe)
+        self.rt_monitor_window_spin.setValue(rt.monitor_window)
+        self.rt_min_win_rate_spin.setValue(rt.min_win_rate)
+        self.rt_min_sharpe_spin.setValue(rt.min_sharpe)
 
     def _update_account_fields(self, name: str):
         acc = self.settings.accounts.get(name)
@@ -326,6 +397,17 @@ class SettingsTab(QWidget):
 
         s.trade_logging.enabled = self.tl_enabled_check.isChecked()
         s.trade_logging.db_path = self.tl_db_path_edit.text()
+
+        # 自動再学習
+        s.retraining.enabled = self.rt_enabled_check.isChecked()
+        s.retraining.weekend_only = self.rt_weekend_only_check.isChecked()
+        s.retraining.interval_hours = self.rt_interval_spin.value()
+        s.retraining.run_wfo_before_train = self.rt_wfo_check.isChecked()
+        s.retraining.wfo_min_win_rate = self.rt_wfo_win_rate_spin.value()
+        s.retraining.wfo_min_sharpe = self.rt_wfo_sharpe_spin.value()
+        s.retraining.monitor_window = self.rt_monitor_window_spin.value()
+        s.retraining.min_win_rate = self.rt_min_win_rate_spin.value()
+        s.retraining.min_sharpe = self.rt_min_sharpe_spin.value()
 
         self.settings_changed.emit()
         log.info("設定保存完了")

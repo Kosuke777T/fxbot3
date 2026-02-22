@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QWidget, QSplitter, QPushButton, QMessageBox,
 )
 from PySide6.QtCore import Qt, QTimer
+from datetime import datetime, date
 
 from fxbot.config import Settings
 from fxbot.gui.tabs.settings_tab import SettingsTab
@@ -15,7 +16,7 @@ from fxbot.gui.tabs.backtest_tab import BacktestTab
 from fxbot.gui.tabs.shap_tab import ShapTab
 from fxbot.gui.tabs.model_tab import ModelTab
 from fxbot.gui.widgets.log_widget import LogWidget
-from fxbot.gui.workers import TradingWorker
+from fxbot.gui.workers import TradingWorker, WeekendRetrainWorker
 from fxbot.logger import get_logger
 
 log = get_logger(__name__)
@@ -28,7 +29,9 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.settings = settings
         self.trading_worker: TradingWorker | None = None
+        self.weekend_retrain_worker: WeekendRetrainWorker | None = None
         self.retrain_timer: QTimer | None = None
+        self._last_weekend_retrain_date: date | None = None
         self._init_ui()
         self._connect_signals()
         self._update_status_bar()
@@ -170,6 +173,7 @@ class MainWindow(QMainWindow):
         self.trading_worker.signals.progress.connect(self._on_trading_progress)
         self.trading_worker.signals.error.connect(self._on_trading_error)
         self.trading_worker.signals.finished.connect(self._on_trading_stopped)
+        self.trading_worker.signals.prediction.connect(self.dashboard_tab.update_predictions)
         self.trading_worker.start()
 
         self.start_trading_btn.setEnabled(False)
@@ -208,22 +212,103 @@ class MainWindow(QMainWindow):
     # --- 自動再学習スケジューラ ---
 
     def _setup_retraining_scheduler(self):
-        """自動再学習タイマーを設定."""
+        """自動再学習タイマーを設定（1時間ごとにチェック）."""
         if not self.settings.retraining.enabled:
             return
 
-        interval_ms = self.settings.retraining.interval_hours * 3600 * 1000
+        # 週末オプション有効時は毎時チェック、無効時はinterval_hours間隔
+        if self.settings.retraining.weekend_only:
+            interval_ms = 3600 * 1000  # 1時間ごとにチェック
+            log.info("自動再学習スケジューラ: 週末モード（毎時チェック）")
+        else:
+            interval_ms = self.settings.retraining.interval_hours * 3600 * 1000
+            log.info(f"自動再学習スケジューラ: {self.settings.retraining.interval_hours}時間間隔")
+
         self.retrain_timer = QTimer(self)
         self.retrain_timer.timeout.connect(self._auto_retrain)
         self.retrain_timer.start(interval_ms)
-        log.info(f"自動再学習スケジューラ: {self.settings.retraining.interval_hours}時間間隔")
 
     def _auto_retrain(self):
-        """定期自動再学習を実行."""
-        log.info("自動再学習開始")
-        # モデルタブのデータがあれば再学習
-        if self.model_tab.multi_tf_data and self.model_tab.symbol_combo.currentText():
+        """定期自動再学習チェック・実行."""
+        if not self.settings.retraining.enabled:
+            return
+
+        rt_cfg = self.settings.retraining
+        now = datetime.now()
+
+        # 週末のみオプション: 平日はスキップ
+        if rt_cfg.weekend_only:
+            if now.weekday() < 5:  # 0=月〜4=金
+                return
+            # 今週末すでに実行済みならスキップ
+            if self._last_weekend_retrain_date == now.date():
+                return
+
+        # ワーカー実行中ならスキップ
+        if self.weekend_retrain_worker and self.weekend_retrain_worker.isRunning():
+            return
+
+        if (rt_cfg.run_wfo_before_train
+                and self.model_tab.multi_tf_data
+                and self.model_tab.symbol_combo.currentText()):
+            self._start_weekend_retrain()
+        elif self.model_tab.multi_tf_data and self.model_tab.symbol_combo.currentText():
+            log.info("自動再学習開始（WFOなし）")
             self.model_tab._start_training()
+
+    def _start_weekend_retrain(self):
+        """WeekendRetrainWorker を起動."""
+        symbol = self.model_tab.symbol_combo.currentText()
+        log.info(f"週末自動WFO→学習開始: {symbol}")
+
+        self.weekend_retrain_worker = WeekendRetrainWorker(
+            self.model_tab.multi_tf_data, symbol, self.settings
+        )
+        self.weekend_retrain_worker.signals.progress.connect(
+            lambda msg: log.info(msg)
+        )
+        self.weekend_retrain_worker.signals.error.connect(self._on_weekend_retrain_error)
+        self.weekend_retrain_worker.signals.finished.connect(self._on_weekend_retrain_finished)
+        self.weekend_retrain_worker.start()
+
+    def _on_weekend_retrain_finished(self, result: dict):
+        """週末再学習完了時の処理."""
+        import json
+        from pathlib import Path
+
+        now = datetime.now()
+        self._last_weekend_retrain_date = now.date()
+
+        # ログ保存
+        log_dir = self.settings.resolve_path("logs")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = log_dir / f"auto_retrain_{now.strftime('%Y%m%d')}.json"
+
+        save_data = {
+            "timestamp": now.isoformat(),
+            "trained": result.get("trained", False),
+            "reason": result.get("reason", ""),
+            "wfo_win_rate": result.get("wfo_win_rate", 0.0),
+            "wfo_sharpe": result.get("wfo_sharpe", 0.0),
+            "train_metrics": result.get("train_metrics", {}),
+            "model_dir": result.get("model_dir", ""),
+        }
+        try:
+            with open(log_file, "w", encoding="utf-8") as f:
+                json.dump(save_data, f, ensure_ascii=False, indent=2, default=str)
+        except Exception as e:
+            log.warning(f"自動再学習ログ保存失敗: {e}")
+
+        trained = result.get("trained", False)
+        reason = result.get("reason", "")
+        log.info(f"週末自動再学習完了: trained={trained}, reason={reason}")
+
+        # ダッシュボードを更新
+        self.dashboard_tab.refresh_auto_retrain_result()
+
+    def _on_weekend_retrain_error(self, msg: str):
+        """週末再学習エラー."""
+        log.error(msg)
 
     # --- 口座切替・その他 ---
 
@@ -300,6 +385,8 @@ class MainWindow(QMainWindow):
         if self.trading_worker and self.trading_worker.isRunning():
             self.trading_worker.stop()
             self.trading_worker.wait(5000)
+        if self.weekend_retrain_worker and self.weekend_retrain_worker.isRunning():
+            self.weekend_retrain_worker.wait(5000)
         if self.retrain_timer:
             self.retrain_timer.stop()
         event.accept()

@@ -99,6 +99,11 @@ class RetrainingConfig:
     monitor_window: int = 20       # 直近N件で監視
     min_win_rate: float = 0.40     # 勝率がこれを下回ったら再学習
     min_sharpe: float = 0.0        # シャープレシオがこれを下回ったら再学習
+    # 週末スケジューラー
+    weekend_only: bool = True          # 土日のみ実行
+    run_wfo_before_train: bool = True  # 学習前にWFOを実行
+    wfo_min_win_rate: float = 0.45     # WFO合格基準（勝率）
+    wfo_min_sharpe: float = 0.3        # WFO合格基準（シャープ）
 
 
 @dataclass

@@ -6,9 +6,9 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QLabel, QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox,
     QPushButton, QMessageBox, QListWidget, QAbstractItemView, QCheckBox,
-    QTabWidget,
+    QTabWidget, QScrollArea,
 )
-from PySide6.QtCore import Signal, QTimer
+from PySide6.QtCore import Qt, Signal, QTimer
 
 from fxbot.config import Settings, AccountConfig
 from fxbot.logger import get_logger
@@ -151,6 +151,10 @@ class SettingsTab(QWidget):
         return page
 
     def _build_model_tab(self) -> QWidget:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+
         page = QWidget()
         layout = QVBoxLayout(page)
 
@@ -180,23 +184,53 @@ class SettingsTab(QWidget):
         mf_group = QGroupBox("市場環境フィルター（勝率向上）")
         mf_layout = QFormLayout()
 
-        self.mf_enabled_check = QCheckBox("フィルターを有効にする")
+        self.mf_enabled_check = QCheckBox("フィルターを有効にする（マスタースイッチ）")
         mf_layout.addRow(self.mf_enabled_check)
+
+        # ADXフィルター
+        self.mf_adx_check = QCheckBox("ADXフィルター（レンジ相場を除外）")
+        self.mf_adx_check.setToolTip("ADXが閾値未満のレンジ相場ではHOLD")
+        mf_layout.addRow(self.mf_adx_check)
 
         self.mf_min_adx_spin = QDoubleSpinBox()
         self.mf_min_adx_spin.setDecimals(1)
         self.mf_min_adx_spin.setRange(5.0, 50.0)
         self.mf_min_adx_spin.setSingleStep(5.0)
         self.mf_min_adx_spin.setToolTip("ADXがこの値未満はレンジ相場としてHOLD")
-        mf_layout.addRow("最小ADX (トレンド判定):", self.mf_min_adx_spin)
+        mf_layout.addRow("    最小ADX:", self.mf_min_adx_spin)
+
+        # スプレッドフィルター
+        self.mf_spread_check = QCheckBox("スプレッドフィルター")
+        self.mf_spread_check.setToolTip("スプレッドが閾値を超えた場合はHOLD")
+        mf_layout.addRow(self.mf_spread_check)
 
         self.mf_max_spread_spin = QDoubleSpinBox()
         self.mf_max_spread_spin.setDecimals(1)
         self.mf_max_spread_spin.setRange(0.5, 10.0)
         self.mf_max_spread_spin.setSingleStep(0.5)
         self.mf_max_spread_spin.setToolTip("スプレッドがこれを超えたらHOLD (pips)")
-        mf_layout.addRow("最大スプレッド (pips):", self.mf_max_spread_spin)
+        mf_layout.addRow("    最大スプレッド (pips):", self.mf_max_spread_spin)
 
+        # ボラティリティフィルター
+        self.mf_volatility_check = QCheckBox("ボラティリティフィルター（低/過大ボラを除外）")
+        self.mf_volatility_check.setToolTip("ATR%が閾値外の低ボラ・過大ボラ相場ではHOLD")
+        mf_layout.addRow(self.mf_volatility_check)
+
+        self.mf_min_atr_spin = QDoubleSpinBox()
+        self.mf_min_atr_spin.setDecimals(3)
+        self.mf_min_atr_spin.setRange(0.001, 0.5)
+        self.mf_min_atr_spin.setSingleStep(0.005)
+        self.mf_min_atr_spin.setToolTip("ATR%がこの値未満は低ボラでHOLD")
+        mf_layout.addRow("    最小ATR% (低ボラ閾値):", self.mf_min_atr_spin)
+
+        self.mf_max_atr_spin = QDoubleSpinBox()
+        self.mf_max_atr_spin.setDecimals(2)
+        self.mf_max_atr_spin.setRange(0.1, 5.0)
+        self.mf_max_atr_spin.setSingleStep(0.1)
+        self.mf_max_atr_spin.setToolTip("ATR%がこの値を超えたら過大ボラでHOLD")
+        mf_layout.addRow("    最大ATR% (過大ボラ閾値):", self.mf_max_atr_spin)
+
+        # セッションフィルター
         self.mf_session_check = QCheckBox("ロンドン・NYセッションのみ取引")
         self.mf_session_check.setToolTip("ロンドン7-16 UTC、NY 13-22 UTC")
         mf_layout.addRow(self.mf_session_check)
@@ -264,7 +298,8 @@ class SettingsTab(QWidget):
         layout.addWidget(rt_group)
 
         layout.addStretch()
-        return page
+        scroll.setWidget(page)
+        return scroll
 
     def _build_log_tab(self) -> QWidget:
         page = QWidget()
@@ -308,8 +343,13 @@ class SettingsTab(QWidget):
 
         # 市場フィルター
         self.mf_enabled_check.setChecked(s.market_filter.enabled)
+        self.mf_adx_check.setChecked(s.market_filter.use_adx_filter)
         self.mf_min_adx_spin.setValue(s.market_filter.min_adx)
+        self.mf_spread_check.setChecked(s.market_filter.use_spread_filter)
         self.mf_max_spread_spin.setValue(s.market_filter.max_spread_pips)
+        self.mf_volatility_check.setChecked(s.market_filter.use_volatility_filter)
+        self.mf_min_atr_spin.setValue(s.market_filter.min_atr_pct)
+        self.mf_max_atr_spin.setValue(s.market_filter.max_atr_pct)
         self.mf_session_check.setChecked(s.market_filter.session_only)
 
         # 取引ログ
@@ -391,8 +431,13 @@ class SettingsTab(QWidget):
         s.model.mode = self.model_mode_combo.currentText()
 
         s.market_filter.enabled = self.mf_enabled_check.isChecked()
+        s.market_filter.use_adx_filter = self.mf_adx_check.isChecked()
         s.market_filter.min_adx = self.mf_min_adx_spin.value()
+        s.market_filter.use_spread_filter = self.mf_spread_check.isChecked()
         s.market_filter.max_spread_pips = self.mf_max_spread_spin.value()
+        s.market_filter.use_volatility_filter = self.mf_volatility_check.isChecked()
+        s.market_filter.min_atr_pct = self.mf_min_atr_spin.value()
+        s.market_filter.max_atr_pct = self.mf_max_atr_spin.value()
         s.market_filter.session_only = self.mf_session_check.isChecked()
 
         s.trade_logging.enabled = self.tl_enabled_check.isChecked()

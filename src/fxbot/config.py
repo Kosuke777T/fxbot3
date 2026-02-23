@@ -86,8 +86,17 @@ class TradeLoggingConfig:
 class MarketFilterConfig:
     """市場環境フィルター設定."""
     enabled: bool = False
+    # ADXフィルター
+    use_adx_filter: bool = True
     min_adx: float = 20.0          # この値未満のADX（弱トレンド）ではHOLD
+    # スプレッドフィルター
+    use_spread_filter: bool = True
     max_spread_pips: float = 3.0   # スプレッドがこれを超えたらHOLD
+    # ボラティリティフィルター
+    use_volatility_filter: bool = False
+    min_atr_pct: float = 0.02      # ATR%がこれ未満は低ボラでHOLD
+    max_atr_pct: float = 0.5       # ATR%がこれを超えたら過大ボラでHOLD
+    # セッションフィルター
     session_only: bool = False     # Trueでロンドン・NYセッションのみ取引
 
 

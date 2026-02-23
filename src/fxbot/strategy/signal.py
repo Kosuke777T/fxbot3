@@ -75,27 +75,24 @@ def generate_signal(
     # --- 市場環境フィルター ---
     mf = settings.market_filter
     if mf.enabled:
-        # レンジ相場フィルター
-        if regime == "ranging":
+        # ADXフィルター（レンジ相場）
+        if mf.use_adx_filter and regime == "ranging":
             log.debug(f"レンジ相場でHOLD: {symbol} regime={regime}")
             return _make_hold(symbol, prediction)
 
         # スプレッドフィルター
-        if spread_pips > mf.max_spread_pips:
+        if mf.use_spread_filter and spread_pips is not None and spread_pips > mf.max_spread_pips:
             log.debug(f"スプレッド過大でHOLD: {symbol} spread={spread_pips:.1f}pips > {mf.max_spread_pips}")
             return _make_hold(symbol, prediction)
 
-        # ATR%ボラティリティフィルター（過小・過大ボラをHOLD）
-        # ATR%が0に近い（動かない）、または異常に高い（指標発表など）はHOLD
-        if current_price > 0 and atr > 0:
+        # ボラティリティフィルター（個別スイッチで制御）
+        if mf.use_volatility_filter and current_price > 0 and atr > 0:
             atr_pct = atr / current_price * 100
-            # 過小ボラ: スプレッドコストに対して動きが小さすぎる（ATR% < 0.02%）
-            if atr_pct < 0.02:
-                log.debug(f"低ボラでHOLD: {symbol} ATR%={atr_pct:.4f}% < 0.02%")
+            if atr_pct < mf.min_atr_pct:
+                log.debug(f"低ボラでHOLD: {symbol} ATR%={atr_pct:.4f}% < {mf.min_atr_pct}%")
                 return _make_hold(symbol, prediction)
-            # 過大ボラ: 経済指標発表などの異常相場（ATR% > 0.5%）
-            if atr_pct > 0.5:
-                log.debug(f"過大ボラでHOLD: {symbol} ATR%={atr_pct:.4f}% > 0.5%")
+            if atr_pct > mf.max_atr_pct:
+                log.debug(f"過大ボラでHOLD: {symbol} ATR%={atr_pct:.4f}% > {mf.max_atr_pct}%")
                 return _make_hold(symbol, prediction)
 
         # セッションフィルター（ロンドン7-16 UTC, NY13-22 UTC）

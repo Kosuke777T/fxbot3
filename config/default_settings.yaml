@@ -119,11 +119,17 @@ trade_logging:
 market_filter:
   # フィルターを有効にするか（有効にすると勝率向上が見込めるがトレード数は減る）
   enabled: false
-  # ADXがこの値未満（弱トレンド=レンジ相場）はHOLD
+  # ADXフィルター: ADXがmin_adx未満（弱トレンド=レンジ相場）はHOLD
+  use_adx_filter: true
   min_adx: 20.0
-  # スプレッドがこれを超えたらHOLD（pips）
+  # スプレッドフィルター: スプレッドがこれを超えたらHOLD（pips）
+  use_spread_filter: true
   max_spread_pips: 3.0
-  # Trueでロンドン(7-16UTC)・NY(13-22UTC)セッションのみ取引
+  # ボラティリティフィルター: ATR%が閾値外の場合はHOLD（デフォルト無効）
+  use_volatility_filter: false
+  min_atr_pct: 0.02
+  max_atr_pct: 0.5
+  # セッションフィルター: Trueでロンドン(7-16UTC)・NY(13-22UTC)セッションのみ取引
   session_only: false
 
 # ログ設定

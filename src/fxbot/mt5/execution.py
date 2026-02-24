@@ -172,15 +172,22 @@ def get_deal_history(position_ticket: int) -> dict | None:
         return None
 
     DEAL_ENTRY_OUT = getattr(mt5, "DEAL_ENTRY_OUT", 1)
+    DEAL_TYPE_BUY = getattr(mt5, "DEAL_TYPE_BUY", 0)
+    DEAL_TYPE_SELL = getattr(mt5, "DEAL_TYPE_SELL", 1)
+
+    # 取引ディール（BUY/SELL）に限定して決済ディールを検出
+    # コミッション・ボーナス等の非取引ディールを除外するため type チェックを追加
     exit_deal = None
     for deal in deals:
-        if deal.entry == DEAL_ENTRY_OUT:
+        if (deal.entry == DEAL_ENTRY_OUT
+                and deal.type in (DEAL_TYPE_BUY, DEAL_TYPE_SELL)):
             exit_deal = deal
             break
 
     if exit_deal is None:
         log.warning(
-            f"決済ディール未検出: position={position_ticket}, deals={len(deals)}"
+            f"決済ディール未検出: position={position_ticket}, deals={len(deals)}, "
+            f"entries={[(d.entry, d.type) for d in deals]}"
         )
         return None
 
@@ -196,9 +203,18 @@ def get_deal_history(position_ticket: int) -> dict | None:
     reason = reason_map.get(exit_deal.reason, f"unknown({exit_deal.reason})")
     deal_time = datetime.fromtimestamp(exit_deal.time).isoformat()
 
+    # 全ディールの profit + commission + swap を合算して正確な損益を算出
+    # （エントリー手数料・決済手数料・スワップを含む）
+    total_profit = sum(
+        getattr(d, "profit", 0.0)
+        + getattr(d, "commission", 0.0)
+        + getattr(d, "swap", 0.0)
+        for d in deals
+    )
+
     return {
         "price": exit_deal.price,
-        "profit": exit_deal.profit,
+        "profit": total_profit,
         "time": deal_time,
         "reason": reason,
     }

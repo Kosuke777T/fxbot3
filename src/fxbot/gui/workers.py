@@ -258,7 +258,7 @@ class TradingWorker(QThread):
             from fxbot.risk.stop_manager import update_trailing_stop, StopLevels
 
             import MetaTrader5 as mt5
-            from datetime import datetime
+            from datetime import datetime, timezone
 
             # TradeLogger & ModelMonitor 初期化
             trade_logger = None
@@ -426,7 +426,8 @@ class TradingWorker(QThread):
                             self.settings.market_filter.enabled
                             and any(not fs.passed for fs in filter_statuses)
                         )
-                        hold_ts = datetime.utcnow().isoformat() if any_blocked else None
+                        # UTC-aware ISO 文字列（df.index の tz-aware DatetimeIndex と型を合わせる）
+                        hold_ts = datetime.now(timezone.utc).isoformat() if any_blocked else None
                         self.signals.filter_update.emit({
                             "symbol": sym,
                             "filter_statuses": [dataclasses.asdict(fs) for fs in filter_statuses],

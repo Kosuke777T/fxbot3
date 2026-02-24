@@ -142,16 +142,25 @@ class ChartWidget(QWidget):
             # mplfinance は数値 x 軸（0, 1, 2...）を使うので iloc を x 座標として使用
             if hold_timestamps:
                 n = len(df)
+                index_tz = getattr(df.index, "tz", None)
                 plotted = set()
+                first_marker = True
                 for ts_str in hold_timestamps:
                     try:
                         ts = pd.to_datetime(ts_str)
+                        # df.index の timezone と型を合わせる
+                        if index_tz is not None and ts.tzinfo is None:
+                            ts = ts.tz_localize("UTC")
+                        elif index_tz is None and ts.tzinfo is not None:
+                            ts = ts.tz_localize(None)
                         iloc = df.index.get_indexer([ts], method="nearest")[0]
                         if 0 <= iloc < n and iloc not in plotted:
                             plotted.add(iloc)
                             y_pos = df["high"].iloc[iloc] * 1.001
                             ax.scatter(iloc, y_pos, color="red", marker="v",
-                                       s=80, zorder=5, label="HOLD" if not plotted - {iloc} else "")
+                                       s=80, zorder=5,
+                                       label="HOLD" if first_marker else "")
+                            first_marker = False
                     except Exception:
                         continue
 
@@ -174,10 +183,15 @@ class ChartWidget(QWidget):
         ax.plot(df.index, df["close"], color="#2196F3", linewidth=1, label="終値")
 
         if hold_timestamps:
+            index_tz = getattr(df.index, "tz", None)
             first = True
             for ts_str in hold_timestamps:
                 try:
                     ts = pd.to_datetime(ts_str)
+                    if index_tz is not None and ts.tzinfo is None:
+                        ts = ts.tz_localize("UTC")
+                    elif index_tz is None and ts.tzinfo is not None:
+                        ts = ts.tz_localize(None)
                     idx = df.index.get_indexer([ts], method="nearest")[0]
                     if 0 <= idx < len(df):
                         ax.scatter(df.index[idx], df["close"].iloc[idx],

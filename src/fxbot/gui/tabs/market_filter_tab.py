@@ -7,7 +7,6 @@ from datetime import datetime
 
 import pandas as pd
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QComboBox,
     QGroupBox,
@@ -88,6 +87,7 @@ class FilterIndicator(QWidget):
         """フィルター状態に応じて表示を更新."""
         self._value_label.setText(current_value)
         self._threshold_label.setText(threshold_str)
+        self._value_label.setToolTip("")  # 前回のツールチップをクリア
 
         if not enabled:
             self._set_color(_COLOR_DISABLED)
@@ -207,42 +207,50 @@ class MarketFilterTab(QWidget):
 
     def update_filter_status(self, data: dict):
         """ワーカーからのシグナルを受信してバッファを更新."""
-        sym = data.get("symbol", "")
-        if not sym:
-            return
+        try:
+            sym = data.get("symbol", "")
+            if not sym:
+                return
 
-        if sym not in self._symbol_data:
-            self._symbol_data[sym] = {
-                "ohlcv_df": pd.DataFrame(),
-                "hold_timestamps": deque(maxlen=200),
-                "filter_statuses": [],
-            }
+            if sym not in self._symbol_data:
+                self._symbol_data[sym] = {
+                    "ohlcv_df": pd.DataFrame(),
+                    "hold_timestamps": deque(maxlen=200),
+                    "filter_statuses": [],
+                }
 
-        buf = self._symbol_data[sym]
-        buf["filter_statuses"] = data.get("filter_statuses", [])
+            buf = self._symbol_data[sym]
+            buf["filter_statuses"] = data.get("filter_statuses", [])
 
-        ohlcv_df = data.get("ohlcv_df")
-        if ohlcv_df is not None and not ohlcv_df.empty:
-            buf["ohlcv_df"] = ohlcv_df
+            ohlcv_df = data.get("ohlcv_df")
+            if isinstance(ohlcv_df, pd.DataFrame) and not ohlcv_df.empty:
+                buf["ohlcv_df"] = ohlcv_df
 
-        hold_ts = data.get("hold_timestamp")
-        if hold_ts:
-            buf["hold_timestamps"].append(hold_ts)
+            hold_ts = data.get("hold_timestamp")
+            if hold_ts:
+                buf["hold_timestamps"].append(hold_ts)
 
-        # 現在選択中のシンボルなら表示更新
-        if self._symbol_combo.currentText() == sym:
-            self._refresh_display(sym)
+            # 現在選択中のシンボルなら表示更新
+            if self._symbol_combo.currentText() == sym:
+                self._refresh_display(sym)
 
-        # 最終更新時刻
-        self._last_update_label.setText(
-            f"最終更新: {datetime.now().strftime('%H:%M:%S')}"
-        )
+            # 最終更新時刻
+            self._last_update_label.setText(
+                f"最終更新: {datetime.now().strftime('%H:%M:%S')}"
+            )
+        except Exception as e:
+            log.warning(f"フィルター状態更新エラー: {e}")
 
     # --- 内部メソッド ---
 
     def _on_symbol_changed(self, symbol: str):
-        if symbol and symbol in self._symbol_data:
+        if not symbol:
+            return
+        if symbol in self._symbol_data:
             self._refresh_display(symbol)
+        else:
+            # まだデータが届いていないシンボル → チャートをリセット
+            self._chart.plot_candlestick(pd.DataFrame(), [], symbol)
 
     def _refresh_display(self, symbol: str):
         """選択シンボルの表示を更新."""

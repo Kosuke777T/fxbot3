@@ -305,6 +305,8 @@ class TradingWorker(QThread):
 
             # クローズ検出用: 前回ループのチケット集合
             prev_tickets: dict[str, set[int]] = {sym: set() for sym in models}
+            # トレーリングSLが発動したチケットを追跡
+            trailing_activated: set[int] = set()
 
             while self._running:
                 predictions_this_bar: dict[str, float] = {}
@@ -337,20 +339,26 @@ class TradingWorker(QThread):
                             }
                             closed_tickets = prev_tickets[sym] - current_tickets
                             for ticket in closed_tickets:
-                                # MT5の履歴から約定情報を取得
                                 try:
                                     from fxbot.mt5.execution import get_deal_history
                                     deal = get_deal_history(ticket)
                                     if deal:
+                                        reason = deal.get("reason", "unknown")
+                                        if reason == "sl" and ticket in trailing_activated:
+                                            reason = "trailing"
                                         trade_logger.log_exit(
                                             ticket=ticket,
                                             exit_price=deal.get("price", 0.0),
                                             exit_time=deal.get("time", datetime.now().isoformat()),
-                                            exit_reason=deal.get("reason", "unknown"),
+                                            exit_reason=reason,
                                             pnl=deal.get("profit", 0.0),
                                         )
+                                    else:
+                                        log.warning(f"決済履歴取得不可 ticket={ticket}")
                                 except Exception as ex:
                                     log.warning(f"クローズ記録失敗 ticket={ticket}: {ex}")
+                                finally:
+                                    trailing_activated.discard(ticket)
 
                         # データ取得
                         from fxbot.mt5.data_feed import fetch_multi_timeframe
@@ -456,6 +464,7 @@ class TradingWorker(QThread):
                                 )
                                 if new_sl is not None:
                                     modify_position(pos["ticket"], sl=new_sl)
+                                    trailing_activated.add(pos["ticket"])
 
                     except Exception as e:
                         log.error(f"取引ループエラー ({sym}): {e}")

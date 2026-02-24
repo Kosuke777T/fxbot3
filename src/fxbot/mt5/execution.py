@@ -155,6 +155,55 @@ def close_position(ticket: int) -> bool:
     return True
 
 
+def get_deal_history(position_ticket: int) -> dict | None:
+    """ポジションの決済情報をMT5履歴から取得.
+
+    Returns:
+        決済情報の辞書 {price, profit, time, reason}、取得失敗時はNone
+    """
+    from datetime import datetime, timedelta
+
+    date_from = datetime(2020, 1, 1)
+    date_to = datetime.now() + timedelta(days=1)
+
+    deals = mt5.history_deals_get(date_from, date_to, position=position_ticket)
+    if not deals:
+        log.warning(f"決済履歴取得失敗: position={position_ticket}")
+        return None
+
+    DEAL_ENTRY_OUT = getattr(mt5, "DEAL_ENTRY_OUT", 1)
+    exit_deal = None
+    for deal in deals:
+        if deal.entry == DEAL_ENTRY_OUT:
+            exit_deal = deal
+            break
+
+    if exit_deal is None:
+        log.warning(
+            f"決済ディール未検出: position={position_ticket}, deals={len(deals)}"
+        )
+        return None
+
+    reason_map = {
+        getattr(mt5, "DEAL_REASON_CLIENT", 0): "manual",
+        getattr(mt5, "DEAL_REASON_MOBILE", 1): "manual",
+        getattr(mt5, "DEAL_REASON_WEB", 2): "manual",
+        getattr(mt5, "DEAL_REASON_EXPERT", 3): "expert",
+        getattr(mt5, "DEAL_REASON_SL", 4): "sl",
+        getattr(mt5, "DEAL_REASON_TP", 5): "tp",
+        getattr(mt5, "DEAL_REASON_SO", 6): "stop_out",
+    }
+    reason = reason_map.get(exit_deal.reason, f"unknown({exit_deal.reason})")
+    deal_time = datetime.fromtimestamp(exit_deal.time).isoformat()
+
+    return {
+        "price": exit_deal.price,
+        "profit": exit_deal.profit,
+        "time": deal_time,
+        "reason": reason,
+    }
+
+
 def close_all_positions() -> int:
     """全ポジションを決済.
 

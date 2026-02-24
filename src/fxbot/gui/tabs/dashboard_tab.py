@@ -198,14 +198,22 @@ class DashboardTab(QWidget):
     def _refresh_trade_log(self):
         """取引ログからパフォーマンスを更新."""
         if not self.settings.trade_logging.enabled:
+            self._set_perf_placeholder("ログ無効")
             return
         try:
             from fxbot.trade_logger import TradeLogger
             from fxbot.model.monitor import ModelMonitor
             db_path = self.settings.resolve_path(self.settings.trade_logging.db_path)
             if not db_path.exists():
+                self._set_perf_placeholder("DB未作成")
                 return
             tl = TradeLogger(db_path)
+
+            total = tl._conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+            closed = tl._conn.execute(
+                "SELECT COUNT(*) FROM trades WHERE pnl IS NOT NULL"
+            ).fetchone()[0]
+
             rt_cfg = self.settings.retraining
             monitor = ModelMonitor(
                 tl,
@@ -215,35 +223,45 @@ class DashboardTab(QWidget):
             )
             result = monitor.check()
             m = result["metrics"]
-
-            # パフォーマンスラベル更新
             count = m.get("count", 0)
+
             if count > 0:
                 wr = m.get("win_rate", 0)
                 wr_color = "#4CAF50" if wr >= 0.5 else "#F44336"
-                self.win_rate_label.setText(f"勝率: {wr:.1%}")
+                self.win_rate_label.setText(f"勝率: {wr:.1%} ({closed}件)")
                 self.win_rate_label.setStyleSheet(
                     f"font-size: 14px; font-weight: bold; color: {wr_color};"
                 )
                 avg = m.get("avg_pnl", 0)
+                avg_color = "#4CAF50" if avg >= 0 else "#F44336"
                 self.avg_pnl_label.setText(f"平均損益: {avg:+.0f}")
+                self.avg_pnl_label.setStyleSheet(f"font-size: 14px; color: {avg_color};")
                 sh = m.get("sharpe", 0)
                 self.sharpe_label.setText(f"Sharpe: {sh:.2f}")
+            else:
+                self.win_rate_label.setText(f"勝率: --- (決済済 {closed}/{total}件)")
+                self.win_rate_label.setStyleSheet("font-size: 14px; font-weight: bold;")
+                self.avg_pnl_label.setText("平均損益: ---")
+                self.avg_pnl_label.setStyleSheet("font-size: 14px;")
+                self.sharpe_label.setText("Sharpe: ---")
 
-                # モデル健全性
-                if result["healthy"]:
-                    self.model_health_label.setText("モデル: 正常")
-                    self.model_health_label.setStyleSheet(
-                        "font-size: 14px; color: #4CAF50;"
-                    )
-                else:
-                    warns = ", ".join(result["warnings"])
-                    self.model_health_label.setText(f"モデル: 要再学習 ({warns})")
-                    self.model_health_label.setStyleSheet(
-                        "font-size: 14px; color: #F44336;"
-                    )
+            if closed == 0:
+                status = f"待機中 (エントリー {total}件)" if total > 0 else "取引なし"
+                self.model_health_label.setText(f"モデル: {status}")
+                self.model_health_label.setStyleSheet("font-size: 14px; color: gray;")
+            elif result["healthy"]:
+                self.model_health_label.setText("モデル: 正常")
+                self.model_health_label.setStyleSheet(
+                    "font-size: 14px; color: #4CAF50;"
+                )
+            else:
+                warns = ", ".join(result["warnings"])
+                self.model_health_label.setText(f"モデル: 要再学習 ({warns})")
+                self.model_health_label.setStyleSheet(
+                    "font-size: 14px; color: #F44336;"
+                )
 
-            # 取引履歴テーブル更新（同じ接続を再利用）
+            # 取引履歴テーブル更新
             trades = tl.get_recent_trades(10)
             tl.close()
             self.trade_history_table.setRowCount(len(trades))
@@ -268,7 +286,17 @@ class DashboardTab(QWidget):
                 )
 
         except Exception as e:
-            log.debug(f"取引ログ更新スキップ: {e}")
+            log.warning(f"取引ログ更新エラー: {e}")
+
+    def _set_perf_placeholder(self, reason: str):
+        """パフォーマンスラベルにプレースホルダーを表示."""
+        self.win_rate_label.setText(f"勝率: --- ({reason})")
+        self.win_rate_label.setStyleSheet("font-size: 14px; font-weight: bold;")
+        self.avg_pnl_label.setText("平均損益: ---")
+        self.avg_pnl_label.setStyleSheet("font-size: 14px;")
+        self.sharpe_label.setText("Sharpe: ---")
+        self.model_health_label.setText(f"モデル: {reason}")
+        self.model_health_label.setStyleSheet("font-size: 14px; color: gray;")
 
     def update_predictions(self, predictions: dict[str, float]):
         """予測値を更新."""

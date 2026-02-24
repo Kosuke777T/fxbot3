@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import dataclasses
 import time
 import traceback
 from pathlib import Path
 
+import pandas as pd
 from PySide6.QtCore import QThread, Signal, QObject
 
 from fxbot.config import Settings
@@ -21,6 +23,7 @@ class WorkerSignals(QObject):
     error = Signal(str)
     progress = Signal(str)
     prediction = Signal(dict)  # {symbol: pred_val}
+    filter_update = Signal(object)  # dict: {symbol, filter_statuses, ohlcv_df, hold_timestamp}
 
 
 class DataFetchWorker(QThread):
@@ -407,6 +410,29 @@ class TradingWorker(QThread):
 
                         # 現在時刻（UTC）
                         current_hour_utc = datetime.utcnow().hour
+
+                        # フィルター状態を計算してGUIに送信
+                        from fxbot.strategy.signal import get_filter_statuses
+                        filter_statuses = get_filter_statuses(
+                            sym, pred_val, current_price, atr,
+                            self.settings, confidence=confidence,
+                            spread_pips=spread_pips,
+                            current_hour_utc=current_hour_utc,
+                            regime=regime,
+                        )
+                        base_tf = self.settings.data.base_timeframe
+                        ohlcv_df = data.get(base_tf, pd.DataFrame()).iloc[-100:].copy()
+                        any_blocked = (
+                            self.settings.market_filter.enabled
+                            and any(not fs.passed for fs in filter_statuses)
+                        )
+                        hold_ts = datetime.utcnow().isoformat() if any_blocked else None
+                        self.signals.filter_update.emit({
+                            "symbol": sym,
+                            "filter_statuses": [dataclasses.asdict(fs) for fs in filter_statuses],
+                            "ohlcv_df": ohlcv_df,
+                            "hold_timestamp": hold_ts,
+                        })
 
                         signal = generate_signal(
                             sym, pred_val, current_price, atr, balance, point,

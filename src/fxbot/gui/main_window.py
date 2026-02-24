@@ -15,6 +15,7 @@ from fxbot.gui.tabs.dashboard_tab import DashboardTab
 from fxbot.gui.tabs.backtest_tab import BacktestTab
 from fxbot.gui.tabs.shap_tab import ShapTab
 from fxbot.gui.tabs.model_tab import ModelTab
+from fxbot.gui.tabs.market_filter_tab import MarketFilterTab
 from fxbot.gui.widgets.log_widget import LogWidget
 from fxbot.gui.workers import TradingWorker, WeekendRetrainWorker
 from fxbot.logger import get_logger
@@ -93,6 +94,9 @@ class MainWindow(QMainWindow):
         self.settings_tab = SettingsTab(self.settings)
         self.tabs.addTab(self.settings_tab, "設定")
 
+        self.market_filter_tab = MarketFilterTab(self.settings)
+        self.tabs.addTab(self.market_filter_tab, "市場フィルター")
+
         splitter.addWidget(self.tabs)
 
         self.log_widget = LogWidget()
@@ -127,6 +131,7 @@ class MainWindow(QMainWindow):
             if symbols:
                 self.model_tab.set_symbols(symbols)
                 self.backtest_tab.set_symbols(symbols)
+                self.market_filter_tab.set_symbols(symbols)
                 return
 
             # symbols.json が存在しないor空 → MT5接続して自動検出
@@ -150,6 +155,7 @@ class MainWindow(QMainWindow):
             symbols = [s["name"] for s in detected]
             self.model_tab.set_symbols(symbols)
             self.backtest_tab.set_symbols(symbols)
+            self.market_filter_tab.set_symbols(symbols)
             log.info(f"シンボル自動検出完了: {len(symbols)}ペア")
         except Exception:
             log.exception("シンボル読み込みエラー")
@@ -174,6 +180,7 @@ class MainWindow(QMainWindow):
         self.trading_worker.signals.error.connect(self._on_trading_error)
         self.trading_worker.signals.finished.connect(self._on_trading_stopped)
         self.trading_worker.signals.prediction.connect(self.dashboard_tab.update_predictions)
+        self.trading_worker.signals.filter_update.connect(self.market_filter_tab.update_filter_status)
         self.trading_worker.start()
 
         self.start_trading_btn.setEnabled(False)

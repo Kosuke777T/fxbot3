@@ -7,7 +7,10 @@
       "WebFetch(domain:wonderfulfxlife.com)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:nanpin-martin.com)",
-      "WebFetch(domain:note.com)"
+      "WebFetch(domain:note.com)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(cd:*)"
     ]
   }
 }

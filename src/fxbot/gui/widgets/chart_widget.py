@@ -88,3 +88,107 @@ class ChartWidget(QWidget):
         ax.grid(True, alpha=0.3)
         self.figure.tight_layout()
         self.canvas.draw()
+
+    def plot_candlestick(self, df, hold_timestamps: list[str] | None = None, symbol: str = ""):
+        """ローソク足チャートを描画（HOLDマーカー付き）.
+
+        mplfinance が利用可能な場合は ax= パターンで既存 Figure に描画。
+        未インストール時は matplotlib 折れ線でフォールバック。
+
+        Args:
+            df: OHLCV DataFrame（index=DatetimeIndex, columns=open/high/low/close）
+            hold_timestamps: HOLDが発生したバーの ISO 文字列タイムスタンプリスト
+            symbol: シンボル名（タイトル表示用）
+        """
+        self.figure.clear()
+
+        if df is None or df.empty:
+            ax = self.figure.add_subplot(111)
+            ax.text(0.5, 0.5, "データなし", ha="center", va="center", transform=ax.transAxes)
+            self.canvas.draw()
+            return
+
+        import pandas as pd
+
+        # カラム名を小文字に統一
+        df = df.copy()
+        df.columns = [c.lower() for c in df.columns]
+
+        required = {"open", "high", "low", "close"}
+        if not required.issubset(set(df.columns)):
+            ax = self.figure.add_subplot(111)
+            ax.text(0.5, 0.5, "OHLCカラムが見つかりません",
+                    ha="center", va="center", transform=ax.transAxes)
+            self.canvas.draw()
+            return
+
+        # DatetimeIndex に変換
+        if not isinstance(df.index, pd.DatetimeIndex):
+            try:
+                df.index = pd.to_datetime(df.index)
+            except Exception:
+                pass
+
+        title = f"{symbol} ローソク足（直近{len(df)}本）" if symbol else f"ローソク足（直近{len(df)}本）"
+
+        try:
+            import mplfinance as mpf
+
+            ax = self.figure.add_subplot(111)
+            # ax= パターン: volume=False で単一 Axes に描画
+            mpf.plot(df, type="candle", ax=ax, volume=False, style="charles")
+
+            # HOLD マーカーを Axes に直接追加
+            # mplfinance は数値 x 軸（0, 1, 2...）を使うので iloc を x 座標として使用
+            if hold_timestamps:
+                n = len(df)
+                plotted = set()
+                for ts_str in hold_timestamps:
+                    try:
+                        ts = pd.to_datetime(ts_str)
+                        iloc = df.index.get_indexer([ts], method="nearest")[0]
+                        if 0 <= iloc < n and iloc not in plotted:
+                            plotted.add(iloc)
+                            y_pos = df["high"].iloc[iloc] * 1.001
+                            ax.scatter(iloc, y_pos, color="red", marker="v",
+                                       s=80, zorder=5, label="HOLD" if not plotted - {iloc} else "")
+                    except Exception:
+                        continue
+
+            ax.set_title(title, fontsize=10)
+            self.figure.tight_layout()
+            self.canvas.draw()
+
+        except ImportError:
+            # mplfinance 未インストール時は折れ線でフォールバック
+            self._plot_candlestick_fallback(df, hold_timestamps, title)
+        except Exception:
+            self._plot_candlestick_fallback(df, hold_timestamps, title)
+
+    def _plot_candlestick_fallback(self, df, hold_timestamps: list[str] | None, title: str):
+        """mplfinance なしの折れ線フォールバック描画."""
+        import pandas as pd
+
+        self.figure.clear()
+        ax = self.figure.add_subplot(111)
+        ax.plot(df.index, df["close"], color="#2196F3", linewidth=1, label="終値")
+
+        if hold_timestamps:
+            first = True
+            for ts_str in hold_timestamps:
+                try:
+                    ts = pd.to_datetime(ts_str)
+                    idx = df.index.get_indexer([ts], method="nearest")[0]
+                    if 0 <= idx < len(df):
+                        ax.scatter(df.index[idx], df["close"].iloc[idx],
+                                   color="red", marker="v", s=80, zorder=5,
+                                   label="HOLD" if first else "")
+                        first = False
+                except Exception:
+                    continue
+
+        ax.set_title(title, fontsize=10)
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=8)
+        self.figure.tight_layout()
+        self.canvas.draw()

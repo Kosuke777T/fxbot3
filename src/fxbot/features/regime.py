@@ -101,12 +101,15 @@ def add_regime_features(df: pd.DataFrame, prefix: str = "") -> pd.DataFrame:
     return df
 
 
-def detect_regime(adx: float, di_pos: float, di_neg: float) -> str:
+def detect_regime(adx: float, di_pos: float, di_neg: float, min_adx: float = 20.0) -> str:
     """現在の市場レジームを文字列で返す（ライブ取引シグナル生成用）.
+
+    Args:
+        min_adx: レンジ相場判定の閾値（settings.market_filter.min_adxを渡す）。
 
     Returns:
         "trend_up" | "trend_down" | "ranging"
     """
-    if adx >= 20:
+    if adx >= min_adx:
         return "trend_up" if di_pos > di_neg else "trend_down"
     return "ranging"

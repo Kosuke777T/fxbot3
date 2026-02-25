@@ -62,7 +62,7 @@ def get_filter_statuses(
     if adx_enabled:
         adx_passed = regime != "ranging"
         current_val = f"レジーム: {regime}"
-        threshold = "レンジ除外"
+        threshold = f"ADX≥{mf.min_adx:.0f}"
         reason = "ranging相場でブロック" if not adx_passed else ""
     else:
         adx_passed = True

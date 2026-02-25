@@ -167,6 +167,16 @@ def _dict_to_dataclass(cls, data: dict):
     return cls(**{k: v for k, v in data.items() if k in field_names})
 
 
+def save_settings(settings: Settings, path: Path | str | None = None) -> None:
+    """SettingsをYAMLファイルに書き込む."""
+    import dataclasses
+    cfg_path = Path(path) if path else DEFAULT_CONFIG_PATH
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    data = dataclasses.asdict(settings)
+    with open(cfg_path, "w", encoding="utf-8") as f:
+        yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
 def load_settings(path: Path | str | None = None) -> Settings:
     """YAML設定ファイルを読み込みSettingsを返す."""
     cfg_path = Path(path) if path else DEFAULT_CONFIG_PATH

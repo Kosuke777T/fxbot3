@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, Signal, QTimer
 
-from fxbot.config import Settings, AccountConfig
+from fxbot.config import Settings, AccountConfig, save_settings
 from fxbot.logger import get_logger
 
 log = get_logger(__name__)
@@ -185,6 +185,7 @@ class SettingsTab(QWidget):
         mf_layout = QFormLayout()
 
         self.mf_enabled_check = QCheckBox("フィルターを有効にする（マスタースイッチ）")
+        self.mf_enabled_check.stateChanged.connect(self._on_mf_enabled_changed)
         mf_layout.addRow(self.mf_enabled_check)
 
         # ADXフィルター
@@ -408,6 +409,13 @@ class SettingsTab(QWidget):
         log.info(f"口座切替: {name} ({acc.type})")
         self.account_changed.emit(name)
 
+    def _on_mf_enabled_changed(self, state: int) -> None:
+        """マスタースイッチ切替時に即時反映・自動保存（保存ボタン不要）."""
+        self.settings.market_filter.enabled = bool(state)
+        save_settings(self.settings)
+        label = "有効" if state else "無効"
+        log.info(f"市場フィルター {label} に切替（自動保存）")
+
     def _save_settings(self):
         s = self.settings
 
@@ -454,6 +462,7 @@ class SettingsTab(QWidget):
         s.retraining.min_win_rate = self.rt_min_win_rate_spin.value()
         s.retraining.min_sharpe = self.rt_min_sharpe_spin.value()
 
+        save_settings(self.settings)
         self.settings_changed.emit()
         log.info("設定保存完了")
         QMessageBox.information(self, "保存", "設定を保存しました。")

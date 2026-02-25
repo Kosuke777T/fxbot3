@@ -310,6 +310,8 @@ class TradingWorker(QThread):
             prev_tickets: dict[str, set[int]] = {sym: set() for sym in models}
             # トレーリングSLが発動したチケットを追跡
             trailing_activated: set[int] = set()
+            # シンボルごとの最新ATR（セッション外トレーリング更新用）
+            last_atr: dict[str, float] = {sym: 0.0 for sym in models}
 
             while self._running:
                 predictions_this_bar: dict[str, float] = {}
@@ -326,6 +328,31 @@ class TradingWorker(QThread):
                     in_session = (7 <= hour_utc < 16) or (13 <= hour_utc < 22)
                     if not in_session:
                         log.debug(f"セッション外スキップ (UTC={hour_utc}時) — 15分待機")
+                        # セッション外でも既存ポジションのトレーリングストップは更新する
+                        for sym in models:
+                            try:
+                                atr = last_atr.get(sym, 0.0)
+                                if atr <= 0.0:
+                                    continue
+                                positions = get_open_positions()
+                                for pos in positions:
+                                    if pos["symbol"] != sym:
+                                        continue
+                                    from fxbot.mt5.execution import modify_position
+                                    stops = StopLevels(
+                                        sl=pos["sl"], tp=pos["tp"],
+                                        trailing_activation=atr * self.settings.risk.trailing_activation_atr,
+                                        trailing_distance=atr * self.settings.risk.trailing_atr_multiplier,
+                                    )
+                                    new_sl = update_trailing_stop(
+                                        pos["type"], pos["price_current"],
+                                        pos["price_open"], pos["sl"], stops,
+                                    )
+                                    if new_sl is not None:
+                                        modify_position(pos["ticket"], sl=new_sl)
+                                        trailing_activated.add(pos["ticket"])
+                            except Exception as e:
+                                log.error(f"セッション外トレーリング更新エラー ({sym}): {e}")
                         for _ in range(900):
                             if not self._running:
                                 break
@@ -387,6 +414,7 @@ class TradingWorker(QThread):
                         # シグナル生成
                         current_price = fm["close"].iloc[-1]
                         atr = fm["atr_14"].iloc[-1] if "atr_14" in fm.columns else current_price * 0.001
+                        last_atr[sym] = atr
 
                         account_info = mt5.account_info()
                         balance = account_info.balance if account_info else 10000
@@ -395,18 +423,20 @@ class TradingWorker(QThread):
                         point = sym_info.point if sym_info else 0.0001
 
                         # スプレッド取得（pips換算）
+                        # MT5の spread はポイント単位。1pip = 10ポイント（JPY系・USD系共通）
                         spread_pips = 0.0
                         if sym_info:
-                            spread_pips = sym_info.spread * sym_info.point / 0.0001
+                            spread_pips = sym_info.spread / 10
 
-                        # 市場レジーム判定
+                        # 市場レジーム判定（add_regime_features()が生成するフラグ列を直接参照）
                         regime = "trend_up"
                         if "regime_ranging" in fm.columns:
-                            from fxbot.features.regime import detect_regime
-                            adx_val = fm["regime_adx"].iloc[-1] if "regime_adx" in fm.columns else 25.0
-                            di_p = fm["adx_pos"].iloc[-1] if "adx_pos" in fm.columns else 20.0
-                            di_n = fm["adx_neg"].iloc[-1] if "adx_neg" in fm.columns else 15.0
-                            regime = detect_regime(adx_val, di_p, di_n)
+                            if fm["regime_ranging"].iloc[-1]:
+                                regime = "ranging"
+                            elif "regime_trend_down" in fm.columns and fm["regime_trend_down"].iloc[-1]:
+                                regime = "trend_down"
+                            else:
+                                regime = "trend_up"
 
                         # 現在時刻（UTC）
                         current_hour_utc = datetime.utcnow().hour

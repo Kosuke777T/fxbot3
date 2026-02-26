@@ -158,15 +158,18 @@ def close_position(ticket: int) -> bool:
 def get_deal_history(position_ticket: int) -> dict | None:
     """ポジションの決済情報をMT5履歴から取得.
 
+    MT5 APIの profit は個別取引の損益（口座通貨）で取得可能。
+    position 単独指定で当該ポジションに紐づく取引ディールのみ取得する
+    （日付＋position 併用だと一部環境で position が効かず全履歴が返り、
+     入金等の profit が残高値となり混入するため）。
+
     Returns:
         決済情報の辞書 {price, profit, time, reason}、取得失敗時はNone
     """
-    from datetime import datetime, timedelta
+    from datetime import datetime
 
-    date_from = datetime(2020, 1, 1)
-    date_to = datetime.now() + timedelta(days=1)
-
-    deals = mt5.history_deals_get(date_from, date_to, position=position_ticket)
+    # position 単独指定で当該ポジションのディールのみ取得（入金・残高系を除外）
+    deals = mt5.history_deals_get(position=position_ticket)
     if not deals:
         log.warning(f"決済履歴取得失敗: position={position_ticket}")
         return None
@@ -203,13 +206,17 @@ def get_deal_history(position_ticket: int) -> dict | None:
     reason = reason_map.get(exit_deal.reason, f"unknown({exit_deal.reason})")
     deal_time = datetime.fromtimestamp(exit_deal.time).isoformat()
 
-    # 全ディールの profit + commission + swap を合算して正確な損益を算出
-    # （エントリー手数料・決済手数料・スワップを含む）
+    # 取引ディール（BUY/SELL）のみ合算。入金・ボーナス等（type=2等）を除外して
+    # 残高値が混入しないようにする。
+    trade_deals = [
+        d for d in deals
+        if d.type in (DEAL_TYPE_BUY, DEAL_TYPE_SELL)
+    ]
     total_profit = sum(
         getattr(d, "profit", 0.0)
         + getattr(d, "commission", 0.0)
         + getattr(d, "swap", 0.0)
-        for d in deals
+        for d in trade_deals
     )
 
     return {

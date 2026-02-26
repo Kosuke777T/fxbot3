@@ -16,6 +16,7 @@ from fxbot.gui.tabs.backtest_tab import BacktestTab
 from fxbot.gui.tabs.shap_tab import ShapTab
 from fxbot.gui.tabs.model_tab import ModelTab
 from fxbot.gui.tabs.market_filter_tab import MarketFilterTab
+from fxbot.gui.tabs.trade_log_tab import TradeLogTab
 from fxbot.gui.widgets.log_widget import LogWidget
 from fxbot.gui.workers import TradingWorker, WeekendRetrainWorker
 from fxbot.logger import get_logger
@@ -96,6 +97,9 @@ class MainWindow(QMainWindow):
 
         self.market_filter_tab = MarketFilterTab(self.settings)
         self.tabs.addTab(self.market_filter_tab, "市場フィルター")
+
+        self.trade_log_tab = TradeLogTab(self.settings)
+        self.tabs.addTab(self.trade_log_tab, "取引ログ")
 
         splitter.addWidget(self.tabs)
 

@@ -92,15 +92,44 @@ class TradeLogger:
         exit_time: str,
         exit_reason: str,
         pnl: float,
+        db_row_id: int | None = None,
     ) -> None:
-        """クローズ済みポジションのexit情報を更新."""
-        self._conn.execute(
+        """クローズ済みポジションのexit情報を更新.
+
+        ticket で更新できない場合（ticket=NULL等）は db_row_id でフォールバックする。
+        """
+        cursor = self._conn.execute(
             "UPDATE trades SET exit_price=?, exit_time=?, exit_reason=?, pnl=? "
             "WHERE ticket=? AND exit_price IS NULL",
             (exit_price, exit_time, exit_reason, pnl, ticket),
         )
         self._conn.commit()
-        log.info(f"取引記録[exit]: ticket={ticket} reason={exit_reason} pnl={pnl:.2f}")
+
+        if cursor.rowcount == 0 and db_row_id is not None:
+            # ticket マッチなし → db_row_id でフォールバック更新
+            cursor = self._conn.execute(
+                "UPDATE trades SET exit_price=?, exit_time=?, exit_reason=?, pnl=? "
+                "WHERE id=? AND exit_price IS NULL",
+                (exit_price, exit_time, exit_reason, pnl, db_row_id),
+            )
+            self._conn.commit()
+            if cursor.rowcount == 0:
+                log.warning(
+                    f"クローズ記録0行更新: ticket={ticket} db_row_id={db_row_id} "
+                    "— DBにticket未登録またはすでにexit済みの可能性"
+                )
+            else:
+                log.info(
+                    f"取引記録[exit/id]: db_row_id={db_row_id} ticket={ticket} "
+                    f"reason={exit_reason} pnl={pnl:.2f}"
+                )
+        elif cursor.rowcount == 0:
+            log.warning(
+                f"クローズ記録0行更新: ticket={ticket} "
+                "— DBにticket未登録またはすでにexit済みの可能性"
+            )
+        else:
+            log.info(f"取引記録[exit]: ticket={ticket} reason={exit_reason} pnl={pnl:.2f}")
 
     def get_recent_trades(self, n: int = 50) -> list[dict]:
         """直近N件の取引を取得."""

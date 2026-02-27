@@ -75,7 +75,7 @@ def send_order(
     if result.retcode != mt5.TRADE_RETCODE_DONE:
         msg = f"注文拒否: {result.retcode} — {result.comment}"
         log.error(msg)
-        return {"error": msg}
+        return None
 
     log.info(f"注文約定: {side.upper()} {symbol} {lot}lot @ {result.price} "
              f"(ticket: {result.order})")
@@ -159,24 +159,34 @@ def get_deal_history(position_ticket: int) -> dict | None:
     """ポジションの決済情報をMT5履歴から取得.
 
     MT5 APIの profit は個別取引の損益（口座通貨）で取得可能。
-    position 単独指定で当該ポジションに紐づく取引ディールのみ取得する
-    （日付＋position 併用だと一部環境で position が効かず全履歴が返り、
-     入金等の profit が残高値となり混入するため）。
+    日付範囲 + position= を組み合わせて検索し、position_id で明示フィルタリングする
+    （一部ブローカーでは position= 単独指定が空を返すケースがあるため）。
+    デポジット等の混入は type チェックで除外する。
 
     Returns:
         決済情報の辞書 {price, profit, time, reason}、取得失敗時はNone
     """
-    from datetime import datetime
-
-    # position 単独指定で当該ポジションのディールのみ取得（入金・残高系を除外）
-    deals = mt5.history_deals_get(position=position_ticket)
-    if not deals:
-        log.warning(f"決済履歴取得失敗: position={position_ticket}")
-        return None
+    from datetime import datetime, timedelta
 
     DEAL_ENTRY_OUT = getattr(mt5, "DEAL_ENTRY_OUT", 1)
     DEAL_TYPE_BUY = getattr(mt5, "DEAL_TYPE_BUY", 0)
     DEAL_TYPE_SELL = getattr(mt5, "DEAL_TYPE_SELL", 1)
+
+    # 日付範囲 + position= で検索（どちらかが効けばヒットする）
+    date_from = datetime(2020, 1, 1)
+    date_to = datetime.now() + timedelta(days=1)
+    deals = mt5.history_deals_get(date_from, date_to, position=position_ticket)
+
+    if not deals:
+        log.warning(f"決済履歴取得失敗: position={position_ticket}")
+        return None
+
+    # position_id で明示フィルタリング（一部環境で position= が効かず全履歴が返る対策）
+    deals = [d for d in deals if getattr(d, "position_id", None) == position_ticket]
+
+    if not deals:
+        log.warning(f"position_idフィルタ後0件: position={position_ticket}")
+        return None
 
     # 取引ディール（BUY/SELL）に限定して決済ディールを検出
     # コミッション・ボーナス等の非取引ディールを除外するため type チェックを追加

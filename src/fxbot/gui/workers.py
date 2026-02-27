@@ -312,6 +312,8 @@ class TradingWorker(QThread):
             trailing_activated: set[int] = set()
             # シンボルごとの最新ATR（セッション外トレーリング更新用）
             last_atr: dict[str, float] = {sym: 0.0 for sym in models}
+            # MT5チケット → DBのrow_id マッピング（ticket=NULL時のフォールバック用）
+            open_trade_ids: dict[int, int] = {}
 
             while self._running:
                 predictions_this_bar: dict[str, float] = {}
@@ -382,10 +384,13 @@ class TradingWorker(QThread):
                                             exit_time=deal.get("time", datetime.now().isoformat()),
                                             exit_reason=reason,
                                             pnl=deal.get("profit", 0.0),
+                                            db_row_id=open_trade_ids.pop(ticket, None),
                                         )
                                     else:
+                                        open_trade_ids.pop(ticket, None)
                                         log.warning(f"決済履歴取得不可 ticket={ticket}")
                                 except Exception as ex:
+                                    open_trade_ids.pop(ticket, None)
                                     log.warning(f"クローズ記録失敗 ticket={ticket}: {ex}")
                                 finally:
                                     trailing_activated.discard(ticket)
@@ -501,7 +506,10 @@ class TradingWorker(QThread):
                                         ticket=result.get("ticket"),
                                         model_version=meta.get("created_at", "unknown"),
                                     )
-                                    trade_logger.log_entry(record)
+                                    db_row_id = trade_logger.log_entry(record)
+                                    entry_ticket = result.get("ticket")
+                                    if entry_ticket is not None:
+                                        open_trade_ids[entry_ticket] = db_row_id
 
                         # トレーリングストップ更新 & チケット集合更新
                         positions = get_open_positions()

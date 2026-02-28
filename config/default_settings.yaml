@@ -1,14 +1,14 @@
 active_account: demo
 accounts:
   demo:
-    server: GaitameFinest-Demo
-    login: 22004581
-    password: eXSIDTUCV4&
+    server: ''
+    login: 0
+    password: ''
     type: demo
   real:
-    server: GaitameFinest-LIVE
-    login: 3002973
-    password: QpNa@w7s
+    server: ''
+    login: 0
+    password: ''
     type: real
 data:
   base_timeframe: M5

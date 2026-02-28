@@ -167,18 +167,54 @@ def _dict_to_dataclass(cls, data: dict):
     return cls(**{k: v for k, v in data.items() if k in field_names})
 
 
+def _save_accounts_to_env(settings: Settings) -> None:
+    """アカウント認証情報を .env ファイルに書き込む."""
+    env_path = _PROJECT_ROOT / ".env"
+
+    # 既存 .env を読み込み、MT5_ 行を除去
+    lines: list[str] = []
+    if env_path.exists():
+        with open(env_path, "r", encoding="utf-8") as f:
+            lines = [line for line in f.readlines() if not line.startswith("MT5_")]
+
+    # 認証情報を追記
+    for name, acc in settings.accounts.items():
+        prefix = f"MT5_{name.upper()}_"
+        lines += [
+            f"{prefix}SERVER={acc.server}\n",
+            f"{prefix}LOGIN={acc.login}\n",
+            f"{prefix}PASSWORD={acc.password}\n",
+        ]
+
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+
+
 def save_settings(settings: Settings, path: Path | str | None = None) -> None:
-    """SettingsをYAMLファイルに書き込む."""
+    """SettingsをYAMLファイルに書き込む（認証情報は .env に保存）."""
     import dataclasses
     cfg_path = Path(path) if path else DEFAULT_CONFIG_PATH
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     data = dataclasses.asdict(settings)
+
+    # YAML には認証情報を書かない
+    for acc_data in data.get("accounts", {}).values():
+        acc_data["server"] = ""
+        acc_data["login"] = 0
+        acc_data["password"] = ""
+
     with open(cfg_path, "w", encoding="utf-8") as f:
         yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
+    # 認証情報は .env に保存
+    _save_accounts_to_env(settings)
+
 
 def load_settings(path: Path | str | None = None) -> Settings:
-    """YAML設定ファイルを読み込みSettingsを返す."""
+    """YAML設定ファイルを読み込みSettingsを返す（認証情報は .env でオーバーライド）."""
+    import os
+    from dotenv import load_dotenv
+
     cfg_path = Path(path) if path else DEFAULT_CONFIG_PATH
     if not cfg_path.exists():
         return Settings()
@@ -211,5 +247,15 @@ def load_settings(path: Path | str | None = None) -> Settings:
     for yaml_key, (cls, attr_name) in section_map.items():
         if yaml_key in raw:
             setattr(settings, attr_name, _dict_to_dataclass(cls, raw[yaml_key]))
+
+    # .env の認証情報でアカウント設定をオーバーライド
+    load_dotenv(_PROJECT_ROOT / ".env", override=True)
+    for name, acc in settings.accounts.items():
+        prefix = f"MT5_{name.upper()}_"
+        acc.server = os.environ.get(f"{prefix}SERVER", acc.server)
+        login_str = os.environ.get(f"{prefix}LOGIN", "")
+        if login_str.strip().isdigit():
+            acc.login = int(login_str)
+        acc.password = os.environ.get(f"{prefix}PASSWORD", acc.password)
 
     return settings

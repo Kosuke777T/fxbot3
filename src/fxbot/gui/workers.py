@@ -157,32 +157,37 @@ class ComparisonWorker(QThread):
     """回帰 vs 分類 × 3閾値の比較バックテストワーカー."""
     signals = WorkerSignals()
 
-    def __init__(self, multi_tf_data: dict, settings: Settings, parent=None):
+    def __init__(self, symbol: str, settings: Settings, parent=None):
         super().__init__(parent)
-        self.multi_tf_data = multi_tf_data
+        self.symbol = symbol
         self.settings = settings
 
     def run(self):
         import copy
         from fxbot.backtest.wfo import run_wfo, replay_with_threshold
         from fxbot.backtest.metrics import calc_all_metrics
+        from fxbot.mt5.data_feed import fetch_multi_timeframe
         import pandas as pd
 
         try:
             self.signals.started.emit()
 
+            # Step 0: データ取得
+            self.signals.progress.emit(f"[比較BT] {self.symbol} データ取得中...")
+            multi_tf_data = fetch_multi_timeframe(self.symbol, self.settings)
+
             # Step 1: 回帰WFO
             self.signals.progress.emit("[比較BT] 回帰WFO実行中 (1/2)...")
             reg_settings = copy.deepcopy(self.settings)
             reg_settings.model.mode = "regression"
-            reg_result = run_wfo(self.multi_tf_data, reg_settings)
+            reg_result = run_wfo(multi_tf_data, reg_settings)
 
             # Step 2: 分類WFO (threshold=0で全予測を保存)
             self.signals.progress.emit("[比較BT] 分類WFO実行中 (2/2)...")
             clf_settings = copy.deepcopy(self.settings)
             clf_settings.model.mode = "classification"
             clf_settings.trading.min_prediction_threshold = 0.0
-            clf_result = run_wfo(self.multi_tf_data, clf_settings)
+            clf_result = run_wfo(multi_tf_data, clf_settings)
 
             # Step 3: 3閾値リプレイ
             self.signals.progress.emit("[比較BT] 閾値リプレイ中...")

@@ -25,7 +25,7 @@ trading:
   min_prediction_threshold: 0.0002
   max_lot: 0.1
   min_lot: 0.01
-  min_confidence: 0.0
+  min_confidence: 0.7
 risk:
   max_risk_per_trade: 0.02
   atr_sl_multiplier: 2.0
@@ -47,7 +47,7 @@ model:
   early_stopping_rounds: 50
   shap_top_pct: 0.5
   model_dir: data/models
-  mode: regression
+  mode: classification
 backtest:
   train_window_days: 180
   test_window_days: 30

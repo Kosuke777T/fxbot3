@@ -60,6 +60,32 @@ class ChartWidget(QWidget):
         self.figure.tight_layout()
         self.canvas.draw()
 
+    def plot_multi_equity(
+        self,
+        equity_curves: dict[str, pd.Series],
+        initial_balance: float = 1_000_000,
+        title: str = "比較エクイティカーブ",
+    ) -> None:
+        """複数エクイティカーブを1グラフに重ねて描画."""
+        import pandas as pd
+        self.figure.clear()
+        ax = self.figure.add_subplot(111)
+        colors = ["#9E9E9E", "#03A9F4", "#4CAF50", "#FF9800"]
+        linestyles = ["--", "-", "-", "-"]
+        for idx, (label, equity) in enumerate(equity_curves.items()):
+            if equity is None or equity.empty:
+                continue
+            ax.plot(equity.index, equity.values,
+                    color=colors[idx % 4], linewidth=1.5,
+                    linestyle=linestyles[idx % 4], label=label)
+        ax.axhline(y=initial_balance, color="gray", linestyle=":", alpha=0.4)
+        ax.set_title(title, fontsize=12)
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"¥{v:,.0f}"))
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="upper left", fontsize=8)
+        self.figure.tight_layout()
+        self.canvas.draw()
+
     def plot_shap_importance(self, importance_df, top_n=20):
         """SHAP特徴量重要度を描画."""
         self.figure.clear()

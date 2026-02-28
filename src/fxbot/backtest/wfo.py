@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import copy
+from dataclasses import dataclass, field
 
 import pandas as pd
 
@@ -28,6 +29,8 @@ class WFOFold:
     train_metrics: dict
     test_metrics: dict
     num_trades: int
+    raw_predictions: pd.Series | None = field(default=None, repr=False)
+    test_data: object | None = field(default=None, repr=False)
 
 
 @dataclass
@@ -125,9 +128,17 @@ def run_wfo(
         if model_mode == "classification":
             pred_df = predictor.predict_with_confidence(test_data)
             # direction: 1(up)→正, -1(down)→負、confidenceで重み付け
-            predictions = pred_df["direction"].astype(float) * pred_df["confidence"]
+            raw_predictions = pred_df["direction"].astype(float) * pred_df["confidence"]
+            # min_confidenceフィルター: 信頼度不足のバーをHOLD(0)に
+            min_conf = settings.trading.min_confidence
+            predictions = raw_predictions.copy()
+            if min_conf > 0.0:
+                predictions[pred_df["confidence"] < min_conf] = 0.0
+                log.debug(f"Fold {fold_num}: min_confidence={min_conf:.2f} → "
+                          f"{(pred_df['confidence'] < min_conf).sum()}バーをHOLD")
         else:
-            predictions = predictor.predict(test_data)
+            raw_predictions = predictor.predict(test_data)
+            predictions = raw_predictions
 
         # 5. バックテスト
         engine = BacktestEngine(settings)
@@ -154,6 +165,8 @@ def run_wfo(
             train_metrics=train_metrics,
             test_metrics=test_metrics,
             num_trades=len(bt_result.trades),
+            raw_predictions=raw_predictions,  # 未フィルター（replay用）
+            test_data=test_data,
         ))
 
         all_equities.append(bt_result.equity)
@@ -175,3 +188,22 @@ def run_wfo(
         combined_trades=combined_trades,
         overall_metrics=overall_metrics,
     )
+
+
+def replay_with_threshold(
+    wfo_result: WFOResult,
+    threshold: float,
+    settings: Settings,
+) -> pd.Series:
+    """分類WFO結果を異なる信頼度閾値でエンジンリプレイ."""
+    all_equities = []
+    for fold in wfo_result.folds:
+        if fold.raw_predictions is None or fold.test_data is None:
+            continue
+        replay_settings = copy.deepcopy(settings)
+        replay_settings.trading.min_prediction_threshold = threshold
+        engine = BacktestEngine(replay_settings)
+        bt = engine.run(fold.test_data, fold.raw_predictions)
+        if not bt.equity.empty:
+            all_equities.append(bt.equity)
+    return pd.concat(all_equities) if all_equities else pd.Series(dtype=float)

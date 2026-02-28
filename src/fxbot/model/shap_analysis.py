@@ -36,7 +36,7 @@ def compute_shap_values(
 
 
 def compute_feature_importance(
-    shap_values: np.ndarray,
+    shap_values: np.ndarray | list,
     feature_names: list[str],
 ) -> pd.DataFrame:
     """SHAP値から特徴量重要度を計算.
@@ -44,7 +44,18 @@ def compute_feature_importance(
     Returns:
         feature, importance列を持つDataFrame（重要度降順）
     """
-    importance = np.abs(shap_values).mean(axis=0)
+    sv = np.array(shap_values)
+    if sv.ndim == 3:
+        n_features = len(feature_names)
+        if sv.shape[-1] == n_features:
+            # (n_classes, n_samples, n_features): クラス軸(0)+サンプル軸(1) を平均
+            importance = np.abs(sv).mean(axis=(0, 1))
+        else:
+            # (n_samples, n_features, n_classes): サンプル軸(0)+クラス軸(2) を平均
+            importance = np.abs(sv).mean(axis=(0, 2))
+    else:
+        # 回帰: shape (n_samples, n_features)
+        importance = np.abs(sv).mean(axis=0)
     df = pd.DataFrame({
         "feature": feature_names,
         "importance": importance,

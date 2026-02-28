@@ -12,7 +12,7 @@ from PySide6.QtGui import QColor
 
 from fxbot.config import Settings
 from fxbot.gui.widgets.chart_widget import ChartWidget
-from fxbot.gui.workers import BacktestWorker
+from fxbot.gui.workers import BacktestWorker, ComparisonWorker, ComparisonResult
 from fxbot.logger import get_logger
 
 log = get_logger(__name__)
@@ -25,6 +25,7 @@ class BacktestTab(QWidget):
         super().__init__(parent)
         self.settings = settings
         self.worker = None
+        self.comparison_worker = None
         self.multi_tf_data = None
         self._init_ui()
 
@@ -40,6 +41,10 @@ class BacktestTab(QWidget):
         self.run_btn = QPushButton("WFO実行")
         self.run_btn.clicked.connect(self._run_backtest)
         ctrl_layout.addWidget(self.run_btn)
+
+        self.compare_btn = QPushButton("比較バックテスト")
+        self.compare_btn.clicked.connect(self._run_comparison)
+        ctrl_layout.addWidget(self.compare_btn)
 
         self.status_label = QLabel("待機中")
         ctrl_layout.addWidget(self.status_label)
@@ -87,6 +92,26 @@ class BacktestTab(QWidget):
         trades_layout.addWidget(self.trades_table)
         trades_group.setLayout(trades_layout)
         layout.addWidget(trades_group)
+
+        # 比較バックテスト結果エリア
+        self.comparison_group = QGroupBox("比較バックテスト結果")
+        self.comparison_group.setVisible(False)
+        comparison_layout = QVBoxLayout()
+
+        self.comparison_chart = ChartWidget(figsize=(10, 5))
+        comparison_layout.addWidget(self.comparison_chart)
+
+        self.comparison_table = QTableWidget()
+        self.comparison_table.setColumnCount(5)
+        self.comparison_table.setHorizontalHeaderLabels(
+            ["指標", "回帰", "分類0.55", "分類0.60", "分類0.65"]
+        )
+        self.comparison_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.Stretch
+        )
+        comparison_layout.addWidget(self.comparison_table)
+        self.comparison_group.setLayout(comparison_layout)
+        layout.addWidget(self.comparison_group)
 
     def set_symbols(self, symbols: list[str]):
         self.symbol_combo.clear()
@@ -200,4 +225,71 @@ class BacktestTab(QWidget):
     def _on_error(self, msg: str):
         self.run_btn.setEnabled(True)
         self.status_label.setText("エラー")
+        log.error(msg)
+
+    def _run_comparison(self):
+        if self.multi_tf_data is None:
+            self.status_label.setText("先にデータを取得してください")
+            return
+
+        self.compare_btn.setEnabled(False)
+        self.run_btn.setEnabled(False)
+        self.status_label.setText("[比較BT] 回帰WFO実行中 (1/2)...")
+
+        self.comparison_worker = ComparisonWorker(self.multi_tf_data, self.settings)
+        self.comparison_worker.signals.progress.connect(self._on_progress)
+        self.comparison_worker.signals.finished.connect(self._on_comparison_finished)
+        self.comparison_worker.signals.error.connect(self._on_comparison_error)
+        self.comparison_worker.start()
+
+    def _on_comparison_finished(self, result: ComparisonResult):
+        self.compare_btn.setEnabled(True)
+        self.run_btn.setEnabled(True)
+        self.status_label.setText("[比較BT] 完了")
+
+        initial_balance = self.settings.backtest.initial_balance
+        equity_curves = {
+            "回帰": result.regression_equity,
+            "分類 0.55": result.clf_equity_055,
+            "分類 0.60": result.clf_equity_060,
+            "分類 0.65": result.clf_equity_065,
+        }
+        self.comparison_chart.plot_multi_equity(equity_curves, initial_balance)
+
+        self._populate_comparison_metrics(
+            result.regression_metrics,
+            result.clf_metrics_055,
+            result.clf_metrics_060,
+            result.clf_metrics_065,
+        )
+        self.comparison_group.setVisible(True)
+
+    def _populate_comparison_metrics(
+        self,
+        reg: dict,
+        m055: dict,
+        m060: dict,
+        m065: dict,
+    ):
+        """比較メトリクステーブルを6指標 × 4列で表示."""
+        rows = [
+            ("トータルリターン", "total_return", lambda v: f"{v*100:.2f}%"),
+            ("シャープレシオ", "sharpe_ratio", lambda v: f"{v:.3f}"),
+            ("最大DD", "max_drawdown_pct", lambda v: f"{v*100:.2f}%"),
+            ("トレード数", "num_trades", lambda v: f"{int(v)}"),
+            ("勝率", "win_rate", lambda v: f"{v*100:.1f}%"),
+            ("プロフィットファクター", "profit_factor", lambda v: f"{v:.2f}"),
+        ]
+        self.comparison_table.setRowCount(len(rows))
+        for i, (label, key, fmt) in enumerate(rows):
+            self.comparison_table.setItem(i, 0, QTableWidgetItem(label))
+            for col, metrics in enumerate([reg, m055, m060, m065], start=1):
+                val = metrics.get(key)
+                text = fmt(val) if val is not None else "—"
+                self.comparison_table.setItem(i, col, QTableWidgetItem(text))
+
+    def _on_comparison_error(self, msg: str):
+        self.compare_btn.setEnabled(True)
+        self.run_btn.setEnabled(True)
+        self.status_label.setText("比較BT エラー")
         log.error(msg)

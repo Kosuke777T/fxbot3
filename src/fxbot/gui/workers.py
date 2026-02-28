@@ -141,6 +141,77 @@ class BacktestWorker(QThread):
             self.signals.error.emit(f"バックテストエラー: {e}\n{traceback.format_exc()}")
 
 
+@dataclasses.dataclass
+class ComparisonResult:
+    regression_equity: pd.Series
+    clf_equity_055: pd.Series
+    clf_equity_060: pd.Series
+    clf_equity_065: pd.Series
+    regression_metrics: dict
+    clf_metrics_055: dict
+    clf_metrics_060: dict
+    clf_metrics_065: dict
+
+
+class ComparisonWorker(QThread):
+    """回帰 vs 分類 × 3閾値の比較バックテストワーカー."""
+    signals = WorkerSignals()
+
+    def __init__(self, multi_tf_data: dict, settings: Settings, parent=None):
+        super().__init__(parent)
+        self.multi_tf_data = multi_tf_data
+        self.settings = settings
+
+    def run(self):
+        import copy
+        from fxbot.backtest.wfo import run_wfo, replay_with_threshold
+        from fxbot.backtest.metrics import calc_all_metrics
+        import pandas as pd
+
+        try:
+            self.signals.started.emit()
+
+            # Step 1: 回帰WFO
+            self.signals.progress.emit("[比較BT] 回帰WFO実行中 (1/2)...")
+            reg_settings = copy.deepcopy(self.settings)
+            reg_settings.model.mode = "regression"
+            reg_result = run_wfo(self.multi_tf_data, reg_settings)
+
+            # Step 2: 分類WFO (threshold=0で全予測を保存)
+            self.signals.progress.emit("[比較BT] 分類WFO実行中 (2/2)...")
+            clf_settings = copy.deepcopy(self.settings)
+            clf_settings.model.mode = "classification"
+            clf_settings.trading.min_prediction_threshold = 0.0
+            clf_result = run_wfo(self.multi_tf_data, clf_settings)
+
+            # Step 3: 3閾値リプレイ
+            self.signals.progress.emit("[比較BT] 閾値リプレイ中...")
+            eq_055 = replay_with_threshold(clf_result, 0.55, self.settings)
+            eq_060 = replay_with_threshold(clf_result, 0.60, self.settings)
+            eq_065 = replay_with_threshold(clf_result, 0.65, self.settings)
+
+            # メトリクス計算
+            def _metrics(equity: pd.Series) -> dict:
+                if equity.empty:
+                    return {}
+                return calc_all_metrics(equity, pd.DataFrame(columns=["pnl"]))
+
+            self.signals.progress.emit("[比較BT] 完了")
+            self.signals.finished.emit(ComparisonResult(
+                regression_equity=reg_result.combined_equity,
+                clf_equity_055=eq_055,
+                clf_equity_060=eq_060,
+                clf_equity_065=eq_065,
+                regression_metrics=reg_result.overall_metrics,
+                clf_metrics_055=_metrics(eq_055),
+                clf_metrics_060=_metrics(eq_060),
+                clf_metrics_065=_metrics(eq_065),
+            ))
+
+        except Exception as e:
+            self.signals.error.emit(f"比較バックテストエラー: {e}\n{traceback.format_exc()}")
+
+
 class WeekendRetrainWorker(QThread):
     """週末自動WFO→学習ワーカー."""
     signals = WorkerSignals()

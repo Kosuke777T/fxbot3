@@ -194,9 +194,14 @@ def replay_with_threshold(
     wfo_result: WFOResult,
     threshold: float,
     settings: Settings,
-) -> pd.Series:
-    """分類WFO結果を異なる信頼度閾値でエンジンリプレイ."""
+) -> tuple[pd.Series, pd.DataFrame]:
+    """分類WFO結果を異なる信頼度閾値でエンジンリプレイ.
+
+    Returns:
+        (equity, trades) のタプル
+    """
     all_equities = []
+    all_trades = []
     for fold in wfo_result.folds:
         if fold.raw_predictions is None or fold.test_data is None:
             continue
@@ -206,4 +211,14 @@ def replay_with_threshold(
         bt = engine.run(fold.test_data, fold.raw_predictions)
         if not bt.equity.empty:
             all_equities.append(bt.equity)
-    return pd.concat(all_equities) if all_equities else pd.Series(dtype=float)
+        if bt.trades:
+            trades_df = pd.DataFrame([{
+                "entry_time": t.entry_time, "exit_time": t.exit_time,
+                "side": t.side, "entry_price": t.entry_price,
+                "exit_price": t.exit_price, "lot": t.lot,
+                "pnl": t.pnl, "exit_reason": t.exit_reason,
+            } for t in bt.trades])
+            all_trades.append(trades_df)
+    equity = pd.concat(all_equities) if all_equities else pd.Series(dtype=float)
+    trades = pd.concat(all_trades, ignore_index=True) if all_trades else pd.DataFrame(columns=["pnl"])
+    return equity, trades

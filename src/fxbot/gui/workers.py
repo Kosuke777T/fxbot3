@@ -191,15 +191,15 @@ class ComparisonWorker(QThread):
 
             # Step 3: 3閾値リプレイ
             self.signals.progress.emit("[比較BT] 閾値リプレイ中...")
-            eq_055 = replay_with_threshold(clf_result, 0.55, self.settings)
-            eq_060 = replay_with_threshold(clf_result, 0.60, self.settings)
-            eq_065 = replay_with_threshold(clf_result, 0.65, self.settings)
+            eq_055, trades_055 = replay_with_threshold(clf_result, 0.55, self.settings)
+            eq_060, trades_060 = replay_with_threshold(clf_result, 0.60, self.settings)
+            eq_065, trades_065 = replay_with_threshold(clf_result, 0.65, self.settings)
 
             # メトリクス計算
-            def _metrics(equity: pd.Series) -> dict:
+            def _metrics(equity: pd.Series, trades: pd.DataFrame) -> dict:
                 if equity.empty:
                     return {}
-                return calc_all_metrics(equity, pd.DataFrame(columns=["pnl"]))
+                return calc_all_metrics(equity, trades)
 
             self.signals.progress.emit("[比較BT] 完了")
             self.signals.finished.emit(ComparisonResult(
@@ -208,9 +208,9 @@ class ComparisonWorker(QThread):
                 clf_equity_060=eq_060,
                 clf_equity_065=eq_065,
                 regression_metrics=reg_result.overall_metrics,
-                clf_metrics_055=_metrics(eq_055),
-                clf_metrics_060=_metrics(eq_060),
-                clf_metrics_065=_metrics(eq_065),
+                clf_metrics_055=_metrics(eq_055, trades_055),
+                clf_metrics_060=_metrics(eq_060, trades_060),
+                clf_metrics_065=_metrics(eq_065, trades_065),
             ))
 
         except Exception as e:

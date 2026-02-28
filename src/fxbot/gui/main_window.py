@@ -34,6 +34,10 @@ class MainWindow(QMainWindow):
         self.weekend_retrain_worker: WeekendRetrainWorker | None = None
         self.retrain_timer: QTimer | None = None
         self._last_weekend_retrain_date: date | None = None
+
+        from fxbot import notifier as slack
+        slack.configure(settings.slack)
+
         self._init_ui()
         self._connect_signals()
         self._update_status_bar()
@@ -124,6 +128,7 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self):
         self.settings_tab.account_changed.connect(self._on_account_changed)
+        self.settings_tab.settings_changed.connect(self._on_settings_changed)
         self.model_tab.on_train_complete = self._on_train_complete
 
     def _load_symbols(self):
@@ -322,6 +327,11 @@ class MainWindow(QMainWindow):
         log.error(msg)
 
     # --- 口座切替・その他 ---
+
+    def _on_settings_changed(self):
+        """設定保存後に SlackNotifier を再初期化."""
+        from fxbot import notifier as slack
+        slack.configure(self.settings.slack)
 
     def _on_account_changed(self, account_name: str):
         """口座切替時の処理."""

@@ -35,6 +35,7 @@ class SettingsTab(QWidget):
         sub_tabs.addTab(self._build_trading_tab(), "取引・リスク")
         sub_tabs.addTab(self._build_model_tab(), "モデル")
         sub_tabs.addTab(self._build_log_tab(), "ログ")
+        sub_tabs.addTab(self._build_notification_tab(), "通知")
         main_layout.addWidget(sub_tabs)
 
         save_btn = QPushButton("設定保存")
@@ -322,6 +323,98 @@ class SettingsTab(QWidget):
         layout.addStretch()
         return page
 
+    def _build_notification_tab(self) -> QWidget:
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+
+        page = QWidget()
+        layout = QVBoxLayout(page)
+
+        # Slack 設定
+        slack_group = QGroupBox("Slack 通知（Incoming Webhook）")
+        slack_layout = QFormLayout()
+
+        self.slack_enabled_check = QCheckBox("Slack 通知を有効にする")
+        slack_layout.addRow(self.slack_enabled_check)
+
+        # Webhook URL（パスワードモード + 表示切替ボタン）
+        webhook_row = QHBoxLayout()
+        self.slack_webhook_edit = QLineEdit()
+        self.slack_webhook_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.slack_webhook_edit.setPlaceholderText("https://hooks.slack.com/services/...")
+        webhook_row.addWidget(self.slack_webhook_edit)
+        self.slack_webhook_toggle_btn = QPushButton("表示")
+        self.slack_webhook_toggle_btn.setFixedWidth(50)
+        self.slack_webhook_toggle_btn.setCheckable(True)
+        self.slack_webhook_toggle_btn.toggled.connect(self._on_webhook_toggle)
+        webhook_row.addWidget(self.slack_webhook_toggle_btn)
+        slack_layout.addRow("Webhook URL:", webhook_row)
+
+        # テスト送信ボタン
+        self.slack_test_btn = QPushButton("テスト送信")
+        self.slack_test_btn.setToolTip("現在の Webhook URL にテストメッセージを送信します")
+        self.slack_test_btn.clicked.connect(self._on_slack_test)
+        slack_layout.addRow(self.slack_test_btn)
+
+        slack_group.setLayout(slack_layout)
+        layout.addWidget(slack_group)
+
+        # 通知イベント選択
+        event_group = QGroupBox("通知イベント")
+        event_layout = QFormLayout()
+
+        self.slack_notify_entry_check = QCheckBox("エントリー通知（BUY/SELL 約定）")
+        event_layout.addRow(self.slack_notify_entry_check)
+
+        self.slack_notify_exit_check = QCheckBox("決済通知（SL/TP/トレーリング/手動）")
+        event_layout.addRow(self.slack_notify_exit_check)
+
+        self.slack_notify_error_check = QCheckBox("エラー通知（注文拒否・取引ループエラー）")
+        event_layout.addRow(self.slack_notify_error_check)
+
+        self.slack_notify_degraded_check = QCheckBox("モデル劣化検知通知")
+        event_layout.addRow(self.slack_notify_degraded_check)
+
+        self.slack_notify_retraining_check = QCheckBox("再学習完了通知（WFO 結果含む）")
+        event_layout.addRow(self.slack_notify_retraining_check)
+
+        self.slack_notify_backtest_check = QCheckBox("バックテスト完了通知")
+        event_layout.addRow(self.slack_notify_backtest_check)
+
+        event_group.setLayout(event_layout)
+        layout.addWidget(event_group)
+
+        layout.addStretch()
+        scroll.setWidget(page)
+        return scroll
+
+    def _on_webhook_toggle(self, checked: bool) -> None:
+        if checked:
+            self.slack_webhook_edit.setEchoMode(QLineEdit.EchoMode.Normal)
+            self.slack_webhook_toggle_btn.setText("隠す")
+        else:
+            self.slack_webhook_edit.setEchoMode(QLineEdit.EchoMode.Password)
+            self.slack_webhook_toggle_btn.setText("表示")
+
+    def _on_slack_test(self) -> None:
+        """Webhook URL にテストメッセージを送信."""
+        from fxbot.config import SlackNotifierConfig
+        from fxbot.notifier import SlackNotifier
+
+        url = self.slack_webhook_edit.text().strip()
+        if not url:
+            QMessageBox.warning(self, "Slack テスト", "Webhook URL を入力してください。")
+            return
+
+        cfg = SlackNotifierConfig(enabled=True, webhook_url=url)
+        n = SlackNotifier(cfg)
+        ok = n._send("🔔 fxbot3 テスト送信 — Slack 通知の設定が正常に完了しました。")
+        if ok:
+            QMessageBox.information(self, "Slack テスト", "テスト送信に成功しました。")
+        else:
+            QMessageBox.warning(self, "Slack テスト", "送信に失敗しました。\nWebhook URL を確認してください。")
+
     def _load_settings(self):
         s = self.settings
         self.account_combo.setCurrentText(s.active_account)
@@ -356,6 +449,16 @@ class SettingsTab(QWidget):
         # 取引ログ
         self.tl_enabled_check.setChecked(s.trade_logging.enabled)
         self.tl_db_path_edit.setText(s.trade_logging.db_path)
+
+        # Slack 通知
+        self.slack_enabled_check.setChecked(s.slack.enabled)
+        self.slack_webhook_edit.setText(s.slack.webhook_url)
+        self.slack_notify_entry_check.setChecked(s.slack.notify_entry)
+        self.slack_notify_exit_check.setChecked(s.slack.notify_exit)
+        self.slack_notify_error_check.setChecked(s.slack.notify_error)
+        self.slack_notify_degraded_check.setChecked(s.slack.notify_model_degraded)
+        self.slack_notify_retraining_check.setChecked(s.slack.notify_retraining_done)
+        self.slack_notify_backtest_check.setChecked(s.slack.notify_backtest_done)
 
         # 自動再学習
         rt = s.retraining
@@ -450,6 +553,16 @@ class SettingsTab(QWidget):
 
         s.trade_logging.enabled = self.tl_enabled_check.isChecked()
         s.trade_logging.db_path = self.tl_db_path_edit.text()
+
+        # Slack 通知
+        s.slack.enabled = self.slack_enabled_check.isChecked()
+        s.slack.webhook_url = self.slack_webhook_edit.text().strip()
+        s.slack.notify_entry = self.slack_notify_entry_check.isChecked()
+        s.slack.notify_exit = self.slack_notify_exit_check.isChecked()
+        s.slack.notify_error = self.slack_notify_error_check.isChecked()
+        s.slack.notify_model_degraded = self.slack_notify_degraded_check.isChecked()
+        s.slack.notify_retraining_done = self.slack_notify_retraining_check.isChecked()
+        s.slack.notify_backtest_done = self.slack_notify_backtest_check.isChecked()
 
         # 自動再学習
         s.retraining.enabled = self.rt_enabled_check.isChecked()

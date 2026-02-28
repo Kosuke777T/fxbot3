@@ -135,6 +135,11 @@ class BacktestWorker(QThread):
             from fxbot.backtest.wfo import run_wfo
             result = run_wfo(self.multi_tf_data, self.settings)
 
+            from fxbot import notifier as _slack
+            _n = _slack.get()
+            if _n:
+                _n.notify_backtest_done()
+
             self.signals.finished.emit(result)
 
         except Exception as e:
@@ -295,6 +300,14 @@ class WeekendRetrainWorker(QThread):
             model_dir = save_model(model, selected, train_metrics, self.symbol, tf, self.settings)
             self.signals.progress.emit(f"週末自動再学習完了: {model_dir}")
 
+            from fxbot import notifier as _slack
+            _n = _slack.get()
+            if _n:
+                _n.notify_retraining_done(
+                    win_rate=train_metrics.get("win_rate"),
+                    sharpe=train_metrics.get("sharpe"),
+                )
+
             self.signals.finished.emit({
                 "wfo_result": wfo_result,
                 "wfo_win_rate": wfo_win_rate,
@@ -332,6 +345,7 @@ class TradingWorker(QThread):
             from fxbot.risk.portfolio import can_open_position, get_open_positions
             from fxbot.mt5.execution import send_order
             from fxbot.risk.stop_manager import update_trailing_stop, StopLevels
+            from fxbot import notifier as _slack
 
             import MetaTrader5 as mt5
             from datetime import datetime, timezone
@@ -390,6 +404,8 @@ class TradingWorker(QThread):
             last_atr: dict[str, float] = {sym: 0.0 for sym in models}
             # MT5チケット → DBのrow_id マッピング（ticket=NULL時のフォールバック用）
             open_trade_ids: dict[int, int] = {}
+            # MT5チケット → {direction, lot, entry_price} マッピング（Slack通知用）
+            open_trade_info: dict[int, dict] = {}
 
             while self._running:
                 predictions_this_bar: dict[str, float] = {}
@@ -454,16 +470,30 @@ class TradingWorker(QThread):
                                         reason = deal.get("reason", "unknown")
                                         if reason == "sl" and ticket in trailing_activated:
                                             reason = "trailing"
+                                        _db_row_id = open_trade_ids.pop(ticket, None)
+                                        _trade_info = open_trade_info.pop(ticket, {})
                                         trade_logger.log_exit(
                                             ticket=ticket,
                                             exit_price=deal.get("price", 0.0),
                                             exit_time=deal.get("time", datetime.now().isoformat()),
                                             exit_reason=reason,
                                             pnl=deal.get("profit", 0.0),
-                                            db_row_id=open_trade_ids.pop(ticket, None),
+                                            db_row_id=_db_row_id,
                                         )
+                                        _n = _slack.get()
+                                        if _n:
+                                            _n.notify_exit(
+                                                symbol=sym,
+                                                direction=_trade_info.get("direction", "?"),
+                                                lot=_trade_info.get("lot", 0.0),
+                                                entry_price=_trade_info.get("entry_price", 0.0),
+                                                exit_price=deal.get("price", 0.0),
+                                                pnl=deal.get("profit", 0.0),
+                                                reason=reason,
+                                            )
                                     else:
                                         open_trade_ids.pop(ticket, None)
+                                        open_trade_info.pop(ticket, None)
                                         log.warning(f"決済履歴取得不可 ticket={ticket}")
                                 except Exception as ex:
                                     open_trade_ids.pop(ticket, None)
@@ -564,6 +594,19 @@ class TradingWorker(QThread):
                                     f"{signal.lot}lot @ {result['price']}"
                                 )
 
+                                # Slack エントリー通知
+                                _n = _slack.get()
+                                if _n:
+                                    _n.notify_entry(
+                                        symbol=sym,
+                                        direction=signal.action.value,
+                                        lot=signal.lot,
+                                        price=result["price"],
+                                        sl=signal.sl,
+                                        tp=signal.tp,
+                                        confidence=confidence if predictor.mode == "classification" else None,
+                                    )
+
                                 # 取引ログ記録
                                 if trade_logger:
                                     from fxbot.trade_logger import TradeRecord
@@ -586,6 +629,11 @@ class TradingWorker(QThread):
                                     entry_ticket = result.get("ticket")
                                     if entry_ticket is not None:
                                         open_trade_ids[entry_ticket] = db_row_id
+                                        open_trade_info[entry_ticket] = {
+                                            "direction": record.direction,
+                                            "lot": record.lot,
+                                            "entry_price": record.entry_price,
+                                        }
 
                         # トレーリングストップ更新 & チケット集合更新
                         positions = get_open_positions()
@@ -609,6 +657,9 @@ class TradingWorker(QThread):
 
                     except Exception as e:
                         log.error(f"取引ループエラー ({sym}): {e}")
+                        _n = _slack.get()
+                        if _n:
+                            _n.notify_error(f"取引ループエラー ({sym}): {e}")
 
                 # 予測値をダッシュボードに送信
                 if predictions_this_bar:
@@ -624,6 +675,9 @@ class TradingWorker(QThread):
                             f"Sharpe={m.get('sharpe', 0):.2f} → 再学習推奨"
                         )
                         log.warning(f"モデル劣化: {result['warnings']}")
+                        _n = _slack.get()
+                        if _n:
+                            _n.notify_model_degraded(result["warnings"])
 
                 # 次のM5バー確定まで待機（バー境界同期）
                 self._wait_for_next_bar()

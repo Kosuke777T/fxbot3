@@ -81,3 +81,12 @@ market_filter:
   min_atr_pct: 0.02
   max_atr_pct: 0.5
   session_only: true
+slack:
+  enabled: true
+  webhook_url: ''
+  notify_entry: true
+  notify_exit: true
+  notify_error: true
+  notify_model_degraded: true
+  notify_retraining_done: true
+  notify_backtest_done: true

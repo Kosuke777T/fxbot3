@@ -124,6 +124,18 @@ class LoggingConfig:
 
 
 @dataclass
+class SlackNotifierConfig:
+    enabled: bool = False
+    webhook_url: str = ""          # .env の SLACK_WEBHOOK_URL で上書き
+    notify_entry: bool = True
+    notify_exit: bool = True
+    notify_error: bool = True
+    notify_model_degraded: bool = True
+    notify_retraining_done: bool = True
+    notify_backtest_done: bool = False
+
+
+@dataclass
 class Settings:
     active_account: str = "demo"
     accounts: dict[str, AccountConfig] = field(default_factory=lambda: {
@@ -139,6 +151,7 @@ class Settings:
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     trade_logging: TradeLoggingConfig = field(default_factory=TradeLoggingConfig)
     market_filter: MarketFilterConfig = field(default_factory=MarketFilterConfig)
+    slack: SlackNotifierConfig = field(default_factory=SlackNotifierConfig)
 
     @property
     def current_account(self) -> AccountConfig:
@@ -167,17 +180,18 @@ def _dict_to_dataclass(cls, data: dict):
     return cls(**{k: v for k, v in data.items() if k in field_names})
 
 
-def _save_accounts_to_env(settings: Settings) -> None:
-    """アカウント認証情報を .env ファイルに書き込む."""
+def _save_env(settings: Settings) -> None:
+    """アカウント認証情報と Slack Webhook URL を .env ファイルに書き込む."""
     env_path = _PROJECT_ROOT / ".env"
 
-    # 既存 .env を読み込み、MT5_ 行を除去
+    # 既存 .env を読み込み、MT5_ 行と SLACK_ 行を除去
     lines: list[str] = []
     if env_path.exists():
         with open(env_path, "r", encoding="utf-8") as f:
-            lines = [line for line in f.readlines() if not line.startswith("MT5_")]
+            lines = [line for line in f.readlines()
+                     if not line.startswith("MT5_") and not line.startswith("SLACK_")]
 
-    # 認証情報を追記
+    # MT5 アカウント情報
     for name, acc in settings.accounts.items():
         prefix = f"MT5_{name.upper()}_"
         lines += [
@@ -185,6 +199,9 @@ def _save_accounts_to_env(settings: Settings) -> None:
             f"{prefix}LOGIN={acc.login}\n",
             f"{prefix}PASSWORD={acc.password}\n",
         ]
+
+    # Slack Webhook URL
+    lines.append(f"SLACK_WEBHOOK_URL={settings.slack.webhook_url}\n")
 
     with open(env_path, "w", encoding="utf-8") as f:
         f.writelines(lines)
@@ -203,11 +220,15 @@ def save_settings(settings: Settings, path: Path | str | None = None) -> None:
         acc_data["login"] = 0
         acc_data["password"] = ""
 
+    # YAML には Webhook URL を書かない
+    if "slack" in data:
+        data["slack"]["webhook_url"] = ""
+
     with open(cfg_path, "w", encoding="utf-8") as f:
         yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
-    # 認証情報は .env に保存
-    _save_accounts_to_env(settings)
+    # 認証情報と Webhook URL は .env に保存
+    _save_env(settings)
 
 
 def load_settings(path: Path | str | None = None) -> Settings:
@@ -243,6 +264,7 @@ def load_settings(path: Path | str | None = None) -> Settings:
         "logging": (LoggingConfig, "logging"),
         "trade_logging": (TradeLoggingConfig, "trade_logging"),
         "market_filter": (MarketFilterConfig, "market_filter"),
+        "slack": (SlackNotifierConfig, "slack"),
     }
     for yaml_key, (cls, attr_name) in section_map.items():
         if yaml_key in raw:
@@ -257,5 +279,10 @@ def load_settings(path: Path | str | None = None) -> Settings:
         if login_str.strip().isdigit():
             acc.login = int(login_str)
         acc.password = os.environ.get(f"{prefix}PASSWORD", acc.password)
+
+    # Slack Webhook URL を .env からオーバーライド
+    webhook = os.environ.get("SLACK_WEBHOOK_URL", "")
+    if webhook:
+        settings.slack.webhook_url = webhook
 
     return settings

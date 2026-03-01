@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import ssl
 import urllib.request
+
+import certifi
 
 log = logging.getLogger(__name__)
 
@@ -36,7 +39,8 @@ class SlackNotifier:
             headers={"Content-Type": "application/json"},
         )
         try:
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+            with urllib.request.urlopen(req, timeout=5, context=ssl_ctx) as resp:
                 return resp.status == 200
         except Exception as e:
             log.warning(f"Slack通知失敗: {e}")

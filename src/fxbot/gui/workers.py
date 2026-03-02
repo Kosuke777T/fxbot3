@@ -385,8 +385,8 @@ class TradingWorker(QThread):
                 seen_symbols.add(sym)
                 model_dir = Path(meta_info["path"])
                 model, meta = load_model(model_dir)
-                # メタデータからモードを取得（なければ設定から）
-                pred_mode = meta.get("mode", model_mode)
+                # メタデータからモードを取得（なければ metrics サブ辞書 → 設定の順で fallback）
+                pred_mode = meta.get("mode") or meta.get("metrics", {}).get("mode", model_mode)
                 models[sym] = (Predictor(model, meta["feature_names"], mode=pred_mode), meta)
                 log.info(f"取引モデル読込: {sym} ({model_dir.name}) mode={pred_mode}")
 
@@ -406,6 +406,9 @@ class TradingWorker(QThread):
             open_trade_ids: dict[int, int] = {}
             # MT5チケット → {direction, lot, entry_price} マッピング（Slack通知用）
             open_trade_info: dict[int, dict] = {}
+            # 決済履歴取得に失敗したチケットのリトライキュー
+            pending_exits: dict[int, dict] = {}
+            MAX_EXIT_RETRIES = 5
 
             while self._running:
                 predictions_this_bar: dict[str, float] = {}
@@ -453,6 +456,46 @@ class TradingWorker(QThread):
                             time.sleep(1)
                         continue
 
+                # ペンディング決済のリトライ（前バーで履歴取得できなかったチケット）
+                if trade_logger and pending_exits:
+                    for ticket in list(pending_exits.keys()):
+                        info = pending_exits[ticket]
+                        try:
+                            from fxbot.mt5.execution import get_deal_history
+                            deal = get_deal_history(ticket)
+                            if deal:
+                                reason = deal.get("reason", "unknown")
+                                if reason == "sl" and info.get("was_trailing", False):
+                                    reason = "trailing"
+                                trade_logger.log_exit(
+                                    ticket=ticket,
+                                    exit_price=deal.get("price", 0.0),
+                                    exit_time=deal.get("time", datetime.now().isoformat()),
+                                    exit_reason=reason,
+                                    pnl=deal.get("profit", 0.0),
+                                    db_row_id=info["db_row_id"],
+                                )
+                                _n = _slack.get()
+                                if _n:
+                                    _n.notify_exit(
+                                        symbol=info["sym"],
+                                        direction=info["trade_info"].get("direction", "?"),
+                                        lot=info["trade_info"].get("lot", 0.0),
+                                        entry_price=info["trade_info"].get("entry_price", 0.0),
+                                        exit_price=deal.get("price", 0.0),
+                                        pnl=deal.get("profit", 0.0),
+                                        reason=reason,
+                                    )
+                                del pending_exits[ticket]
+                            elif info["retry_count"] >= MAX_EXIT_RETRIES:
+                                log.error(f"決済履歴取得最大リトライ超過 ticket={ticket} — 記録スキップ")
+                                del pending_exits[ticket]
+                            else:
+                                info["retry_count"] += 1
+                                log.warning(f"決済履歴リトライ {info['retry_count']}/{MAX_EXIT_RETRIES}: ticket={ticket}")
+                        except Exception as ex:
+                            log.warning(f"ペンディング決済リトライ失敗 ticket={ticket}: {ex}")
+
                 for sym, (predictor, meta) in models.items():
                     try:
                         # クローズ検出: 前回あったチケットが消えた → exit記録
@@ -492,12 +535,27 @@ class TradingWorker(QThread):
                                                 reason=reason,
                                             )
                                     else:
-                                        open_trade_ids.pop(ticket, None)
-                                        open_trade_info.pop(ticket, None)
-                                        log.warning(f"決済履歴取得不可 ticket={ticket}")
+                                        _db_row_id = open_trade_ids.pop(ticket, None)
+                                        _trade_info = open_trade_info.pop(ticket, {})
+                                        pending_exits[ticket] = {
+                                            "db_row_id": _db_row_id,
+                                            "trade_info": _trade_info,
+                                            "sym": sym,
+                                            "retry_count": 0,
+                                            "was_trailing": ticket in trailing_activated,
+                                        }
+                                        log.warning(f"決済履歴取得不可 ticket={ticket} — リトライキューに追加")
                                 except Exception as ex:
-                                    open_trade_ids.pop(ticket, None)
-                                    log.warning(f"クローズ記録失敗 ticket={ticket}: {ex}")
+                                    _db_row_id = open_trade_ids.pop(ticket, None)
+                                    _trade_info = open_trade_info.pop(ticket, {})
+                                    pending_exits[ticket] = {
+                                        "db_row_id": _db_row_id,
+                                        "trade_info": _trade_info,
+                                        "sym": sym,
+                                        "retry_count": 0,
+                                        "was_trailing": ticket in trailing_activated,
+                                    }
+                                    log.warning(f"クローズ記録失敗 ticket={ticket}: {ex} — リトライキューに追加")
                                 finally:
                                     trailing_activated.discard(ticket)
 

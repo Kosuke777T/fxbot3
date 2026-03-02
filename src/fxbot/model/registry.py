@@ -44,6 +44,7 @@ def save_model(
         "timeframe": timeframe,
         "created_at": datetime.now().isoformat(),
         "feature_names": feature_names,
+        "mode": metrics.get("mode", "regression"),
         "metrics": metrics,
         "num_features": len(feature_names),
         "best_iteration": model.best_iteration,

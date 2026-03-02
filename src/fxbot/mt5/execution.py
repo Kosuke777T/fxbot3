@@ -162,47 +162,17 @@ def get_deal_history(position_ticket: int) -> dict | None:
     日付範囲 + position= を組み合わせて検索し、position_id で明示フィルタリングする
     （一部ブローカーでは position= 単独指定が空を返すケースがあるため）。
     デポジット等の混入は type チェックで除外する。
+    複数ポジション同時決済時にMT5履歴反映が遅延する場合に備え、最大3回リトライする。
 
     Returns:
         決済情報の辞書 {price, profit, time, reason}、取得失敗時はNone
     """
+    import time
     from datetime import datetime, timedelta
 
     DEAL_ENTRY_OUT = getattr(mt5, "DEAL_ENTRY_OUT", 1)
     DEAL_TYPE_BUY = getattr(mt5, "DEAL_TYPE_BUY", 0)
     DEAL_TYPE_SELL = getattr(mt5, "DEAL_TYPE_SELL", 1)
-
-    # 日付範囲 + position= で検索（どちらかが効けばヒットする）
-    date_from = datetime(2020, 1, 1)
-    date_to = datetime.now() + timedelta(days=1)
-    deals = mt5.history_deals_get(date_from, date_to, position=position_ticket)
-
-    if not deals:
-        log.warning(f"決済履歴取得失敗: position={position_ticket}")
-        return None
-
-    # position_id で明示フィルタリング（一部環境で position= が効かず全履歴が返る対策）
-    deals = [d for d in deals if getattr(d, "position_id", None) == position_ticket]
-
-    if not deals:
-        log.warning(f"position_idフィルタ後0件: position={position_ticket}")
-        return None
-
-    # 取引ディール（BUY/SELL）に限定して決済ディールを検出
-    # コミッション・ボーナス等の非取引ディールを除外するため type チェックを追加
-    exit_deal = None
-    for deal in deals:
-        if (deal.entry == DEAL_ENTRY_OUT
-                and deal.type in (DEAL_TYPE_BUY, DEAL_TYPE_SELL)):
-            exit_deal = deal
-            break
-
-    if exit_deal is None:
-        log.warning(
-            f"決済ディール未検出: position={position_ticket}, deals={len(deals)}, "
-            f"entries={[(d.entry, d.type) for d in deals]}"
-        )
-        return None
 
     reason_map = {
         getattr(mt5, "DEAL_REASON_CLIENT", 0): "manual",
@@ -213,28 +183,57 @@ def get_deal_history(position_ticket: int) -> dict | None:
         getattr(mt5, "DEAL_REASON_TP", 5): "tp",
         getattr(mt5, "DEAL_REASON_SO", 6): "stop_out",
     }
-    reason = reason_map.get(exit_deal.reason, f"unknown({exit_deal.reason})")
-    deal_time = datetime.fromtimestamp(exit_deal.time).isoformat()
 
-    # 取引ディール（BUY/SELL）のみ合算。入金・ボーナス等（type=2等）を除外して
-    # 残高値が混入しないようにする。
-    trade_deals = [
-        d for d in deals
-        if d.type in (DEAL_TYPE_BUY, DEAL_TYPE_SELL)
-    ]
-    total_profit = sum(
-        getattr(d, "profit", 0.0)
-        + getattr(d, "commission", 0.0)
-        + getattr(d, "swap", 0.0)
-        for d in trade_deals
-    )
+    date_from = datetime(2020, 1, 1)
 
-    return {
-        "price": exit_deal.price,
-        "profit": total_profit,
-        "time": deal_time,
-        "reason": reason,
-    }
+    for attempt in range(3):
+        date_to = datetime.now() + timedelta(days=1)
+        deals = mt5.history_deals_get(date_from, date_to, position=position_ticket)
+
+        # position_id で明示フィルタリング（一部環境で position= が効かず全履歴が返る対策）
+        if deals:
+            deals = [d for d in deals if getattr(d, "position_id", None) == position_ticket]
+
+        if deals:
+            # 取引ディール（BUY/SELL）に限定して決済ディールを検出
+            # コミッション・ボーナス等の非取引ディールを除外するため type チェックを追加
+            exit_deal = None
+            for deal in deals:
+                if (deal.entry == DEAL_ENTRY_OUT
+                        and deal.type in (DEAL_TYPE_BUY, DEAL_TYPE_SELL)):
+                    exit_deal = deal
+                    break
+
+            if exit_deal is not None:
+                deal_time = datetime.fromtimestamp(exit_deal.time).isoformat()
+                reason = reason_map.get(exit_deal.reason, f"unknown({exit_deal.reason})")
+
+                # 取引ディール（BUY/SELL）のみ合算。入金・ボーナス等（type=2等）を除外して
+                # 残高値が混入しないようにする。
+                trade_deals = [
+                    d for d in deals
+                    if d.type in (DEAL_TYPE_BUY, DEAL_TYPE_SELL)
+                ]
+                total_profit = sum(
+                    getattr(d, "profit", 0.0)
+                    + getattr(d, "commission", 0.0)
+                    + getattr(d, "swap", 0.0)
+                    for d in trade_deals
+                )
+
+                return {
+                    "price": exit_deal.price,
+                    "profit": total_profit,
+                    "time": deal_time,
+                    "reason": reason,
+                }
+
+        if attempt < 2:
+            log.debug(f"決済履歴リトライ {attempt + 1}/3: position={position_ticket}")
+            time.sleep(2.0)
+
+    log.warning(f"決済履歴取得失敗（3回リトライ後）: position={position_ticket}")
+    return None
 
 
 def close_all_positions() -> int:

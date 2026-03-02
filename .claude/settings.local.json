@@ -24,7 +24,9 @@
       "Bash(cd /d/fxbot3 && uv run python -c \"\n# HOLD マーカーのタイムゾーン問題を確認\nimport pandas as pd\nfrom datetime import datetime, timezone\n\n# df.index: tz-aware UTC \\(MT5データの実際の形式\\)\ndates = pd.date_range\\('2024-01-01', periods=20, freq='5min', tz='UTC'\\)\n\n# hold_ts: workers.py の datetime.utcnow\\(\\).isoformat\\(\\) → tz-naive\nhold_naive = datetime.utcnow\\(\\).isoformat\\(\\)\nprint\\('hold_ts \\(naive\\):', hold_naive\\)\n\nts_naive = pd.to_datetime\\(hold_naive\\)\nprint\\('ts_naive tz:', ts_naive.tzinfo\\)\n\ntry:\n    idx = dates.get_indexer\\([ts_naive], method='nearest'\\)\n    print\\('get_indexer \\(naive→aware\\): OK', idx\\)\nexcept Exception as e:\n    print\\(f'get_indexer ERROR: {type\\(e\\).__name__}: {e}'\\)\n\n# fix: UTC aware timestamp\nhold_aware = datetime.now\\(timezone.utc\\).isoformat\\(\\)\nts_aware = pd.to_datetime\\(hold_aware\\)\nprint\\('ts_aware tz:', ts_aware.tzinfo\\)\ntry:\n    idx = dates.get_indexer\\([ts_aware], method='nearest'\\)\n    print\\('get_indexer \\(aware→aware\\): OK', idx\\)\nexcept Exception as e:\n    print\\(f'get_indexer ERROR: {type\\(e\\).__name__}: {e}'\\)\n\" 2>&1)",
       "Bash(uv run:*)",
       "Bash(uv sync:*)",
-      "Bash(uv pip:*)"
+      "Bash(uv pip:*)",
+      "WebFetch(domain:www.mql5.com)",
+      "Bash(python3:*)"
     ]
   }
 }

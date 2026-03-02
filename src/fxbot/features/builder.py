@@ -31,6 +31,8 @@ def compute_features_single(df: pd.DataFrame, prefix: str = "") -> pd.DataFrame:
     result = df.copy()
     for func in _FEATURE_FUNCS:
         result = func(result, prefix=prefix)
+        # 関数間で DataFrame をデフラグして PerformanceWarning を抑制
+        result = result.copy()
     return result
 
 

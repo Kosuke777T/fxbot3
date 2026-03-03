@@ -168,7 +168,11 @@ def get_deal_history(position_ticket: int) -> dict | None:
         決済情報の辞書 {price, profit, time, reason}、取得失敗時はNone
     """
     import time
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
+
+    # MT5の deal.time はUTCのUnixタイムスタンプ。日本時間(JST)で記録するため明示的に変換
+    JST = ZoneInfo("Asia/Tokyo")
 
     DEAL_ENTRY_OUT = getattr(mt5, "DEAL_ENTRY_OUT", 1)
     DEAL_TYPE_BUY = getattr(mt5, "DEAL_TYPE_BUY", 0)
@@ -205,7 +209,8 @@ def get_deal_history(position_ticket: int) -> dict | None:
                     break
 
             if exit_deal is not None:
-                deal_time = datetime.fromtimestamp(exit_deal.time).isoformat()
+                utc_dt = datetime.fromtimestamp(exit_deal.time, tz=timezone.utc)
+                deal_time = utc_dt.astimezone(JST).replace(tzinfo=None).isoformat()
                 reason = reason_map.get(exit_deal.reason, f"unknown({exit_deal.reason})")
 
                 # 取引ディール（BUY/SELL）のみ合算。入金・ボーナス等（type=2等）を除外して

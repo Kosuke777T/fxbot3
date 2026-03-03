@@ -349,6 +349,13 @@ class TradingWorker(QThread):
 
             import MetaTrader5 as mt5
             from datetime import datetime, timezone
+            from zoneinfo import ZoneInfo
+
+            # 取引ログは日本時間(JST)で記録（execution.pyの決済時刻と統一）
+            JST = ZoneInfo("Asia/Tokyo")
+
+            def _jst_now() -> str:
+                return datetime.now(JST).replace(tzinfo=None).isoformat()
 
             # TradeLogger & ModelMonitor 初期化
             trade_logger = None
@@ -470,7 +477,7 @@ class TradingWorker(QThread):
                                 trade_logger.log_exit(
                                     ticket=ticket,
                                     exit_price=deal.get("price", 0.0),
-                                    exit_time=deal.get("time", datetime.now().isoformat()),
+                                    exit_time=deal.get("time", _jst_now()),
                                     exit_reason=reason,
                                     pnl=deal.get("profit", 0.0),
                                     db_row_id=info["db_row_id"],
@@ -518,7 +525,7 @@ class TradingWorker(QThread):
                                         trade_logger.log_exit(
                                             ticket=ticket,
                                             exit_price=deal.get("price", 0.0),
-                                            exit_time=deal.get("time", datetime.now().isoformat()),
+                                            exit_time=deal.get("time", _jst_now()),
                                             exit_reason=reason,
                                             pnl=deal.get("profit", 0.0),
                                             db_row_id=_db_row_id,
@@ -669,7 +676,7 @@ class TradingWorker(QThread):
                                 if trade_logger:
                                     from fxbot.trade_logger import TradeRecord
                                     record = TradeRecord(
-                                        timestamp=datetime.now().isoformat(),
+                                        timestamp=_jst_now(),
                                         symbol=sym,
                                         direction=signal.action.value,
                                         entry_price=result["price"],

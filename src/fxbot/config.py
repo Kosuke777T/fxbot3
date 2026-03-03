@@ -46,6 +46,7 @@ class RiskConfig:
     atr_tp_multiplier: float = 3.0
     trailing_atr_multiplier: float = 1.5
     trailing_activation_atr: float = 1.0
+    trailing_update_interval: int = 60  # バー待機中のトレーリング更新間隔（秒）、0で無効
 
 
 @dataclass

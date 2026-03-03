@@ -433,34 +433,14 @@ class TradingWorker(QThread):
                     if not in_session:
                         log.debug(f"セッション外スキップ (UTC={hour_utc}時) — 15分待機")
                         # セッション外でも既存ポジションのトレーリングストップは更新する
-                        for sym in models:
-                            try:
-                                atr = last_atr.get(sym, 0.0)
-                                if atr <= 0.0:
-                                    continue
-                                positions = get_open_positions()
-                                for pos in positions:
-                                    if pos["symbol"] != sym:
-                                        continue
-                                    from fxbot.mt5.execution import modify_position
-                                    stops = StopLevels(
-                                        sl=pos["sl"], tp=pos["tp"],
-                                        trailing_activation=atr * self.settings.risk.trailing_activation_atr,
-                                        trailing_distance=atr * self.settings.risk.trailing_atr_multiplier,
-                                    )
-                                    new_sl = update_trailing_stop(
-                                        pos["type"], pos["price_current"],
-                                        pos["price_open"], pos["sl"], stops,
-                                    )
-                                    if new_sl is not None:
-                                        modify_position(pos["ticket"], sl=new_sl)
-                                        trailing_activated.add(pos["ticket"])
-                            except Exception as e:
-                                log.error(f"セッション外トレーリング更新エラー ({sym}): {e}")
-                        for _ in range(900):
+                        self._update_trailing_stops(models, last_atr, trailing_activated)
+                        _interval = self.settings.risk.trailing_update_interval
+                        for _i in range(900):
                             if not self._running:
                                 break
                             time.sleep(1)
+                            if _interval and (_i + 1) % _interval == 0:
+                                self._update_trailing_stops(models, last_atr, trailing_activated)
                         continue
 
                 # ペンディング決済のリトライ（前バーで履歴取得できなかったチケット）
@@ -700,25 +680,11 @@ class TradingWorker(QThread):
                                             "entry_price": record.entry_price,
                                         }
 
-                        # トレーリングストップ更新 & チケット集合更新
+                        # チケット集合更新（次バーのクローズ検出用）
                         positions = get_open_positions()
-                        prev_tickets[sym] = set()
-                        for pos in positions:
-                            if pos["symbol"] == sym:
-                                prev_tickets[sym].add(pos["ticket"])
-                                from fxbot.mt5.execution import modify_position
-                                stops = StopLevels(
-                                    sl=pos["sl"], tp=pos["tp"],
-                                    trailing_activation=atr * self.settings.risk.trailing_activation_atr,
-                                    trailing_distance=atr * self.settings.risk.trailing_atr_multiplier,
-                                )
-                                new_sl = update_trailing_stop(
-                                    pos["type"], pos["price_current"],
-                                    pos["price_open"], pos["sl"], stops,
-                                )
-                                if new_sl is not None:
-                                    modify_position(pos["ticket"], sl=new_sl)
-                                    trailing_activated.add(pos["ticket"])
+                        prev_tickets[sym] = {
+                            pos["ticket"] for pos in positions if pos["symbol"] == sym
+                        }
 
                     except Exception as e:
                         log.error(f"取引ループエラー ({sym}): {e}")
@@ -744,8 +710,11 @@ class TradingWorker(QThread):
                         if _n:
                             _n.notify_model_degraded(result["warnings"])
 
-                # 次のM5バー確定まで待機（バー境界同期）
-                self._wait_for_next_bar()
+                # トレーリングストップ更新（バー確定タイミング）
+                self._update_trailing_stops(models, last_atr, trailing_activated)
+
+                # 次のM5バー確定まで待機（バー境界同期、待機中もトレーリング更新）
+                self._wait_with_trailing_updates(models, last_atr, trailing_activated)
 
             if trade_logger:
                 trade_logger.close()
@@ -755,6 +724,82 @@ class TradingWorker(QThread):
 
         except Exception as e:
             self.signals.error.emit(f"取引ワーカーエラー: {e}\n{traceback.format_exc()}")
+
+    def _update_trailing_stops(
+        self, models: dict, last_atr: dict, trailing_activated: set
+    ) -> None:
+        """全オープンポジションのトレーリングSLを更新してMT5に反映."""
+        from fxbot.risk.portfolio import get_open_positions
+        from fxbot.risk.stop_manager import update_trailing_stop, StopLevels
+        from fxbot.mt5.execution import modify_position
+
+        for sym in models:
+            try:
+                atr = last_atr.get(sym, 0.0)
+                if atr <= 0.0:
+                    continue
+                positions = get_open_positions()
+                for pos in positions:
+                    if pos["symbol"] != sym:
+                        continue
+                    stops = StopLevels(
+                        sl=pos["sl"], tp=pos["tp"],
+                        trailing_activation=atr * self.settings.risk.trailing_activation_atr,
+                        trailing_distance=atr * self.settings.risk.trailing_atr_multiplier,
+                    )
+                    new_sl = update_trailing_stop(
+                        pos["type"], pos["price_current"],
+                        pos["price_open"], pos["sl"], stops,
+                    )
+                    if new_sl is not None:
+                        modify_position(pos["ticket"], sl=new_sl)
+                        trailing_activated.add(pos["ticket"])
+                        log.debug(
+                            f"トレーリング更新: {sym} ticket={pos['ticket']} new_sl={new_sl:.5f}"
+                        )
+            except Exception as e:
+                log.error(f"トレーリング更新エラー ({sym}): {e}")
+
+    def _wait_with_trailing_updates(
+        self, models: dict, last_atr: dict, trailing_activated: set
+    ) -> None:
+        """次のM5バー確定まで待機。trailing_update_interval秒ごとにトレーリングSLを更新."""
+        import datetime as dt
+
+        interval = self.settings.risk.trailing_update_interval
+
+        now = dt.datetime.now()
+        minute = now.minute
+        next_bar_minute = ((minute // 5) + 1) * 5
+        if next_bar_minute >= 60:
+            next_bar = now.replace(minute=0, second=5, microsecond=0) + dt.timedelta(hours=1)
+        else:
+            next_bar = now.replace(minute=next_bar_minute, second=5, microsecond=0)
+
+        wait_seconds = (next_bar - now).total_seconds()
+        wait_seconds = max(10, min(310, wait_seconds))
+        total_wait = int(wait_seconds)
+
+        log.debug(f"次バー待機: {wait_seconds:.0f}秒 (次バー: {next_bar.strftime('%H:%M:%S')})")
+
+        if interval and interval > 0:
+            elapsed = 0
+            while elapsed < total_wait and self._running:
+                chunk = min(interval, total_wait - elapsed)
+                for _ in range(chunk):
+                    if not self._running:
+                        break
+                    time.sleep(1)
+                elapsed += chunk
+                # 次バー到達前のみ更新
+                if elapsed < total_wait and self._running:
+                    log.debug(f"バー待機中トレーリング更新 (経過{elapsed}秒)")
+                    self._update_trailing_stops(models, last_atr, trailing_activated)
+        else:
+            for _ in range(total_wait):
+                if not self._running:
+                    break
+                time.sleep(1)
 
     def _wait_for_next_bar(self) -> None:
         """次のM5バー確定タイミング（分の末尾が0/5）+ 5秒まで待機."""

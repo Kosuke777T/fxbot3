@@ -20,18 +20,25 @@ data:
   bars_count: 10000
   cache_dir: data/ohlcv
 trading:
-  max_positions: 2
+  max_positions: 3
   prediction_horizon: 6
   min_prediction_threshold: 0.0002
-  max_lot: 0.1
+  max_lot: 0.07000000000000002
   min_lot: 0.01
-  min_confidence: 0.7
+  min_confidence: 0.0
+  active_symbols:
+  - EURJPY-
+  - EURUSD-
+  - USDJPY-
 risk:
   max_risk_per_trade: 0.02
   atr_sl_multiplier: 2.0
   atr_tp_multiplier: 3.0
   trailing_atr_multiplier: 1.5
   trailing_activation_atr: 1.0
+  trailing_update_interval: 60
+  trailing_sl_enabled: true
+  trailing_tp_enabled: false
 model:
   lgbm_params:
     objective: regression
@@ -47,7 +54,7 @@ model:
   early_stopping_rounds: 50
   shap_top_pct: 0.5
   model_dir: data/models
-  mode: classification
+  mode: regression
 backtest:
   train_window_days: 180
   test_window_days: 30
@@ -80,7 +87,7 @@ market_filter:
   use_volatility_filter: true
   min_atr_pct: 0.02
   max_atr_pct: 0.5
-  session_only: true
+  session_only: false
 slack:
   enabled: true
   webhook_url: ''

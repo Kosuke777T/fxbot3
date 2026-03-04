@@ -37,6 +37,7 @@ class TradingConfig:
     max_lot: float = 0.1
     min_lot: float = 0.01
     min_confidence: float = 0.0  # 分類モデルの最低信頼度（0.0=無効）
+    active_symbols: list[str] = field(default_factory=list)  # 最大3ペア
 
 
 @dataclass
@@ -47,6 +48,8 @@ class RiskConfig:
     trailing_atr_multiplier: float = 1.5
     trailing_activation_atr: float = 1.0
     trailing_update_interval: int = 60  # バー待機中のトレーリング更新間隔（秒）、0で無効
+    trailing_sl_enabled: bool = True   # SL側：SLを利益方向へ追従
+    trailing_tp_enabled: bool = False  # TP側：TP到達後も決済せず継続
 
 
 @dataclass

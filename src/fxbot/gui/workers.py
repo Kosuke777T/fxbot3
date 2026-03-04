@@ -407,6 +407,8 @@ class TradingWorker(QThread):
             prev_tickets: dict[str, set[int]] = {sym: set() for sym in models}
             # トレーリングSLが発動したチケットを追跡
             trailing_activated: set[int] = set()
+            # TP側トレーリング発動（MT5のTP解除済み）チケットを追跡
+            tp_triggered: set[int] = set()
             # シンボルごとの最新ATR（セッション外トレーリング更新用）
             last_atr: dict[str, float] = {sym: 0.0 for sym in models}
             # MT5チケット → DBのrow_id マッピング（ticket=NULL時のフォールバック用）
@@ -433,14 +435,14 @@ class TradingWorker(QThread):
                     if not in_session:
                         log.debug(f"セッション外スキップ (UTC={hour_utc}時) — 15分待機")
                         # セッション外でも既存ポジションのトレーリングストップは更新する
-                        self._update_trailing_stops(models, last_atr, trailing_activated)
+                        self._update_trailing_stops(models, last_atr, trailing_activated, tp_triggered)
                         _interval = self.settings.risk.trailing_update_interval
                         for _i in range(900):
                             if not self._running:
                                 break
                             time.sleep(1)
                             if _interval and (_i + 1) % _interval == 0:
-                                self._update_trailing_stops(models, last_atr, trailing_activated)
+                                self._update_trailing_stops(models, last_atr, trailing_activated, tp_triggered)
                         continue
 
                 # ペンディング決済のリトライ（前バーで履歴取得できなかったチケット）
@@ -711,10 +713,10 @@ class TradingWorker(QThread):
                             _n.notify_model_degraded(result["warnings"])
 
                 # トレーリングストップ更新（バー確定タイミング）
-                self._update_trailing_stops(models, last_atr, trailing_activated)
+                self._update_trailing_stops(models, last_atr, trailing_activated, tp_triggered)
 
                 # 次のM5バー確定まで待機（バー境界同期、待機中もトレーリング更新）
-                self._wait_with_trailing_updates(models, last_atr, trailing_activated)
+                self._wait_with_trailing_updates(models, last_atr, trailing_activated, tp_triggered)
 
             if trade_logger:
                 trade_logger.close()
@@ -726,12 +728,14 @@ class TradingWorker(QThread):
             self.signals.error.emit(f"取引ワーカーエラー: {e}\n{traceback.format_exc()}")
 
     def _update_trailing_stops(
-        self, models: dict, last_atr: dict, trailing_activated: set
+        self, models: dict, last_atr: dict, trailing_activated: set, tp_triggered: set
     ) -> None:
         """全オープンポジションのトレーリングSLを更新してMT5に反映."""
         from fxbot.risk.portfolio import get_open_positions
         from fxbot.risk.stop_manager import update_trailing_stop, StopLevels
         from fxbot.mt5.execution import modify_position
+
+        risk_cfg = self.settings.risk
 
         for sym in models:
             try:
@@ -742,26 +746,44 @@ class TradingWorker(QThread):
                 for pos in positions:
                     if pos["symbol"] != sym:
                         continue
-                    stops = StopLevels(
-                        sl=pos["sl"], tp=pos["tp"],
-                        trailing_activation=atr * self.settings.risk.trailing_activation_atr,
-                        trailing_distance=atr * self.settings.risk.trailing_atr_multiplier,
-                    )
-                    new_sl = update_trailing_stop(
-                        pos["type"], pos["price_current"],
-                        pos["price_open"], pos["sl"], stops,
-                    )
-                    if new_sl is not None:
-                        modify_position(pos["ticket"], sl=new_sl)
-                        trailing_activated.add(pos["ticket"])
-                        log.debug(
-                            f"トレーリング更新: {sym} ticket={pos['ticket']} new_sl={new_sl:.5f}"
+
+                    # TP側トレーリング: 価格がTPを越えたらMT5のTPを外す
+                    if risk_cfg.trailing_tp_enabled:
+                        if pos["type"] == "buy" and pos["tp"] > 0 and pos["price_current"] >= pos["tp"]:
+                            modify_position(pos["ticket"], tp=0.0)
+                            tp_triggered.add(pos["ticket"])
+                            log.debug(
+                                f"TP側トレーリング発動: {sym} ticket={pos['ticket']} tp解除"
+                            )
+                        elif pos["type"] == "sell" and pos["tp"] > 0 and pos["price_current"] <= pos["tp"]:
+                            modify_position(pos["ticket"], tp=0.0)
+                            tp_triggered.add(pos["ticket"])
+                            log.debug(
+                                f"TP側トレーリング発動: {sym} ticket={pos['ticket']} tp解除"
+                            )
+
+                    # SL側トレーリング
+                    if risk_cfg.trailing_sl_enabled:
+                        stops = StopLevels(
+                            sl=pos["sl"], tp=pos["tp"],
+                            trailing_activation=atr * risk_cfg.trailing_activation_atr,
+                            trailing_distance=atr * risk_cfg.trailing_atr_multiplier,
                         )
+                        new_sl = update_trailing_stop(
+                            pos["type"], pos["price_current"],
+                            pos["price_open"], pos["sl"], stops,
+                        )
+                        if new_sl is not None:
+                            modify_position(pos["ticket"], sl=new_sl)
+                            trailing_activated.add(pos["ticket"])
+                            log.debug(
+                                f"トレーリング更新: {sym} ticket={pos['ticket']} new_sl={new_sl:.5f}"
+                            )
             except Exception as e:
                 log.error(f"トレーリング更新エラー ({sym}): {e}")
 
     def _wait_with_trailing_updates(
-        self, models: dict, last_atr: dict, trailing_activated: set
+        self, models: dict, last_atr: dict, trailing_activated: set, tp_triggered: set
     ) -> None:
         """次のM5バー確定まで待機。trailing_update_interval秒ごとにトレーリングSLを更新."""
         import datetime as dt
@@ -794,7 +816,7 @@ class TradingWorker(QThread):
                 # 次バー到達前のみ更新
                 if elapsed < total_wait and self._running:
                     log.debug(f"バー待機中トレーリング更新 (経過{elapsed}秒)")
-                    self._update_trailing_stops(models, last_atr, trailing_activated)
+                    self._update_trailing_stops(models, last_atr, trailing_activated, tp_triggered)
         else:
             for _ in range(total_wait):
                 if not self._running:

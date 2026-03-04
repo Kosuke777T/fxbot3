@@ -28,6 +28,7 @@ class Position:
     sl: float
     tp: float
     trailing_sl: float | None = None
+    tp_triggered: bool = False  # TP到達後トレーリング継続フラグ
 
 
 @dataclass
@@ -100,41 +101,52 @@ class BacktestEngine:
                 exit_reason = ""
 
                 if pos.side == Side.BUY:
-                    # SLチェック
-                    if low <= pos.sl:
-                        exit_price = pos.sl
-                        exit_reason = "sl"
-                    # TPチェック
-                    elif high >= pos.tp:
-                        exit_price = pos.tp
-                        exit_reason = "tp"
+                    # SLチェック（trailing_slがあれば優先）
+                    effective_sl = pos.trailing_sl if pos.trailing_sl is not None else pos.sl
+                    if low <= effective_sl:
+                        exit_price = effective_sl
+                        exit_reason = "trailing" if pos.trailing_sl is not None else "sl"
+                    elif not pos.tp_triggered and high >= pos.tp:
+                        # TP到達
+                        if not risk_cfg.trailing_tp_enabled:
+                            exit_price = pos.tp
+                            exit_reason = "tp"
+                        else:
+                            pos.tp_triggered = True  # TP到達マーク、決済しない
+                            # TP水準からtrailing_distanceだけ戻った位置にSLをロック
+                            lock_sl = pos.tp - atr * risk_cfg.trailing_atr_multiplier
+                            if pos.trailing_sl is None or lock_sl > pos.trailing_sl:
+                                pos.trailing_sl = lock_sl
                     else:
-                        # トレーリングストップ更新
-                        activation = pos.entry_price + atr * risk_cfg.trailing_activation_atr
-                        if high >= activation:
-                            new_trailing = high - atr * risk_cfg.trailing_atr_multiplier
-                            if pos.trailing_sl is None or new_trailing > pos.trailing_sl:
-                                pos.trailing_sl = new_trailing
-                        if pos.trailing_sl and low <= pos.trailing_sl:
-                            exit_price = pos.trailing_sl
-                            exit_reason = "trailing"
+                        # trailing_sl_enabledがONのときのみSLを追従更新
+                        if risk_cfg.trailing_sl_enabled:
+                            activation = pos.entry_price + atr * risk_cfg.trailing_activation_atr
+                            if high >= activation:
+                                new_trailing = high - atr * risk_cfg.trailing_atr_multiplier
+                                if pos.trailing_sl is None or new_trailing > pos.trailing_sl:
+                                    pos.trailing_sl = new_trailing
 
                 else:  # SELL
-                    if high >= pos.sl:
-                        exit_price = pos.sl
-                        exit_reason = "sl"
-                    elif low <= pos.tp:
-                        exit_price = pos.tp
-                        exit_reason = "tp"
+                    effective_sl = pos.trailing_sl if pos.trailing_sl is not None else pos.sl
+                    if high >= effective_sl:
+                        exit_price = effective_sl
+                        exit_reason = "trailing" if pos.trailing_sl is not None else "sl"
+                    elif not pos.tp_triggered and low <= pos.tp:
+                        if not risk_cfg.trailing_tp_enabled:
+                            exit_price = pos.tp
+                            exit_reason = "tp"
+                        else:
+                            pos.tp_triggered = True
+                            lock_sl = pos.tp + atr * risk_cfg.trailing_atr_multiplier
+                            if pos.trailing_sl is None or lock_sl < pos.trailing_sl:
+                                pos.trailing_sl = lock_sl
                     else:
-                        activation = pos.entry_price - atr * risk_cfg.trailing_activation_atr
-                        if low <= activation:
-                            new_trailing = low + atr * risk_cfg.trailing_atr_multiplier
-                            if pos.trailing_sl is None or new_trailing < pos.trailing_sl:
-                                pos.trailing_sl = new_trailing
-                        if pos.trailing_sl and high >= pos.trailing_sl:
-                            exit_price = pos.trailing_sl
-                            exit_reason = "trailing"
+                        if risk_cfg.trailing_sl_enabled:
+                            activation = pos.entry_price - atr * risk_cfg.trailing_activation_atr
+                            if low <= activation:
+                                new_trailing = low + atr * risk_cfg.trailing_atr_multiplier
+                                if pos.trailing_sl is None or new_trailing < pos.trailing_sl:
+                                    pos.trailing_sl = new_trailing
 
                 if exit_price is not None:
                     if pos.side == Side.BUY:

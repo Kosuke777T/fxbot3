@@ -1,4 +1,4 @@
-"""メインウィンドウ — QMainWindow + 5タブ + ライブ取引制御."""
+"""メインウィンドウ — QMainWindow + タブ + ライブ取引制御."""
 
 from __future__ import annotations
 
@@ -17,6 +17,8 @@ from fxbot.gui.tabs.shap_tab import ShapTab
 from fxbot.gui.tabs.model_tab import ModelTab
 from fxbot.gui.tabs.market_filter_tab import MarketFilterTab
 from fxbot.gui.tabs.trade_log_tab import TradeLogTab
+from fxbot.gui.tabs.pair_selection_tab import PairSelectionTab
+from fxbot.gui.tabs.batch_train_tab import BatchTrainTab
 from fxbot.gui.widgets.log_widget import LogWidget
 from fxbot.gui.workers import TradingWorker, WeekendRetrainWorker
 from fxbot.logger import get_logger
@@ -84,24 +86,39 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
 
+        # 0. ダッシュボード
         self.dashboard_tab = DashboardTab(self.settings)
         self.tabs.addTab(self.dashboard_tab, "ダッシュボード")
 
+        # 1. 通貨ペア選択
+        self.pair_selection_tab = PairSelectionTab(self.settings)
+        self.tabs.addTab(self.pair_selection_tab, "通貨ペア")
+
+        # 2. 一括学習
+        self.batch_train_tab = BatchTrainTab(self.settings)
+        self.tabs.addTab(self.batch_train_tab, "一括学習")
+
+        # 3. モデル
         self.model_tab = ModelTab(self.settings)
         self.tabs.addTab(self.model_tab, "モデル")
 
+        # 4. バックテスト
         self.backtest_tab = BacktestTab(self.settings)
         self.tabs.addTab(self.backtest_tab, "バックテスト")
 
+        # 5. SHAP
         self.shap_tab = ShapTab(self.settings)
         self.tabs.addTab(self.shap_tab, "SHAP")
 
+        # 6. 設定
         self.settings_tab = SettingsTab(self.settings)
         self.tabs.addTab(self.settings_tab, "設定")
 
+        # 7. 市場フィルター
         self.market_filter_tab = MarketFilterTab(self.settings)
         self.tabs.addTab(self.market_filter_tab, "市場フィルター")
 
+        # 8. 取引ログ
         self.trade_log_tab = TradeLogTab(self.settings)
         self.tabs.addTab(self.trade_log_tab, "取引ログ")
 
@@ -129,6 +146,8 @@ class MainWindow(QMainWindow):
     def _connect_signals(self):
         self.settings_tab.account_changed.connect(self._on_account_changed)
         self.settings_tab.settings_changed.connect(self._on_settings_changed)
+        self.settings_tab.settings_changed.connect(self._on_symbols_changed)
+        self.pair_selection_tab.settings_changed.connect(self._on_symbols_changed)
         self.model_tab.on_train_complete = self._on_train_complete
 
     def _load_symbols(self):
@@ -138,9 +157,10 @@ class MainWindow(QMainWindow):
 
             symbols = get_symbol_names(self.settings)
             if symbols:
+                self.pair_selection_tab.set_symbols(symbols)
                 self.model_tab.set_symbols(symbols)
                 self.backtest_tab.set_symbols(symbols)
-                self.market_filter_tab.set_symbols(symbols)
+                self._on_symbols_changed()
                 return
 
             # symbols.json が存在しないor空 → MT5接続して自動検出
@@ -149,6 +169,7 @@ class MainWindow(QMainWindow):
 
             if not connect(self.settings):
                 log.warning("MT5接続失敗 — シンボル自動検出をスキップ")
+                self._on_symbols_changed()
                 return
 
             self.connection_status.setText("接続中")
@@ -158,16 +179,24 @@ class MainWindow(QMainWindow):
             detected = detect_symbols(self.settings)
             if not detected:
                 log.warning("シンボル検出結果が空です")
+                self._on_symbols_changed()
                 return
 
             save_symbols(detected, self.settings)
             symbols = [s["name"] for s in detected]
+            self.pair_selection_tab.set_symbols(symbols)
             self.model_tab.set_symbols(symbols)
             self.backtest_tab.set_symbols(symbols)
-            self.market_filter_tab.set_symbols(symbols)
+            self._on_symbols_changed()
             log.info(f"シンボル自動検出完了: {len(symbols)}ペア")
         except Exception:
             log.exception("シンボル読み込みエラー")
+
+    def _on_symbols_changed(self) -> None:
+        """active_symbols 変更時に各タブを更新."""
+        syms = self.settings.trading.active_symbols
+        self.batch_train_tab.refresh_symbols(syms)
+        self.market_filter_tab.refresh_symbols(syms)
 
     # --- ライブ取引制御 ---
 
@@ -232,9 +261,8 @@ class MainWindow(QMainWindow):
         if not self.settings.retraining.enabled:
             return
 
-        # 週末オプション有効時は毎時チェック、無効時はinterval_hours間隔
         if self.settings.retraining.weekend_only:
-            interval_ms = 3600 * 1000  # 1時間ごとにチェック
+            interval_ms = 3600 * 1000
             log.info("自動再学習スケジューラ: 週末モード（毎時チェック）")
         else:
             interval_ms = self.settings.retraining.interval_hours * 3600 * 1000
@@ -252,15 +280,12 @@ class MainWindow(QMainWindow):
         rt_cfg = self.settings.retraining
         now = datetime.now()
 
-        # 週末のみオプション: 平日はスキップ
         if rt_cfg.weekend_only:
-            if now.weekday() < 5:  # 0=月〜4=金
+            if now.weekday() < 5:
                 return
-            # 今週末すでに実行済みならスキップ
             if self._last_weekend_retrain_date == now.date():
                 return
 
-        # ワーカー実行中ならスキップ
         if self.weekend_retrain_worker and self.weekend_retrain_worker.isRunning():
             return
 
@@ -295,7 +320,6 @@ class MainWindow(QMainWindow):
         now = datetime.now()
         self._last_weekend_retrain_date = now.date()
 
-        # ログ保存
         log_dir = self.settings.resolve_path("logs")
         log_dir.mkdir(parents=True, exist_ok=True)
         log_file = log_dir / f"auto_retrain_{now.strftime('%Y%m%d')}.json"
@@ -319,7 +343,6 @@ class MainWindow(QMainWindow):
         reason = result.get("reason", "")
         log.info(f"週末自動再学習完了: trained={trained}, reason={reason}")
 
-        # ダッシュボードを更新
         self.dashboard_tab.refresh_auto_retrain_result()
 
     def _on_weekend_retrain_error(self, msg: str):
@@ -335,7 +358,6 @@ class MainWindow(QMainWindow):
 
     def _on_account_changed(self, account_name: str):
         """口座切替時の処理."""
-        # 取引中なら停止
         if self.trading_worker and self.trading_worker.isRunning():
             self._stop_trading()
             self.trading_worker.wait(5000)

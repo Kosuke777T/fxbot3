@@ -145,6 +145,12 @@ class SettingsTab(QWidget):
         self.atr_tp_spin.setSingleStep(0.5)
         risk_layout.addRow("ATR TP倍率:", self.atr_tp_spin)
 
+        self.trailing_sl_check = QCheckBox("SLトレーリング（SLを利益方向へ追従）")
+        risk_layout.addRow(self.trailing_sl_check)
+
+        self.trailing_tp_check = QCheckBox("TPトレーリング（TP到達後も継続保有）")
+        risk_layout.addRow(self.trailing_tp_check)
+
         risk_group.setLayout(risk_layout)
         layout.addWidget(risk_group)
 
@@ -428,6 +434,8 @@ class SettingsTab(QWidget):
         self.risk_per_trade_spin.setValue(s.risk.max_risk_per_trade)
         self.atr_sl_spin.setValue(s.risk.atr_sl_multiplier)
         self.atr_tp_spin.setValue(s.risk.atr_tp_multiplier)
+        self.trailing_sl_check.setChecked(s.risk.trailing_sl_enabled)
+        self.trailing_tp_check.setChecked(s.risk.trailing_tp_enabled)
 
         # モデル設定
         mode_idx = self.model_mode_combo.findText(s.model.mode)
@@ -538,6 +546,8 @@ class SettingsTab(QWidget):
         s.risk.max_risk_per_trade = self.risk_per_trade_spin.value()
         s.risk.atr_sl_multiplier = self.atr_sl_spin.value()
         s.risk.atr_tp_multiplier = self.atr_tp_spin.value()
+        s.risk.trailing_sl_enabled = self.trailing_sl_check.isChecked()
+        s.risk.trailing_tp_enabled = self.trailing_tp_check.isChecked()
 
         s.model.mode = self.model_mode_combo.currentText()
 

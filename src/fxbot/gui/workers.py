@@ -419,6 +419,45 @@ class TradingWorker(QThread):
             pending_exits: dict[int, dict] = {}
             MAX_EXIT_RETRIES = 5
 
+            # 起動時同期: MT5履歴でDB未決済レコードを更新
+            if trade_logger:
+                _open_positions_init = get_open_positions()
+                _open_tickets_now = {p["ticket"] for p in _open_positions_init}
+
+                _synced = 0
+                for _row in trade_logger.get_unclosed_trades():
+                    _tk = _row["ticket"]
+                    if _tk in _open_tickets_now:
+                        continue  # まだオープン中
+                    from fxbot.mt5.execution import get_deal_history
+                    _deal = get_deal_history(_tk)
+                    if _deal:
+                        _reason = _deal.get("reason", "unknown")
+                        trade_logger.log_exit(
+                            ticket=_tk,
+                            exit_price=_deal["price"],
+                            exit_time=_deal["time"],
+                            exit_reason=_reason,
+                            pnl=_deal["profit"],
+                            db_row_id=_row["id"],
+                        )
+                        _synced += 1
+                        log.info(f"起動時同期: ticket={_tk} reason={_reason} pnl={_deal['profit']:.2f}")
+                    else:
+                        log.warning(f"起動時同期: ticket={_tk} MT5履歴取得失敗（手動確認要）")
+                if _synced:
+                    log.info(f"起動時MT5同期完了: {_synced}件の決済情報を更新")
+
+                # open_trade_ids を DB から復元（ticket→db_row_id マッピング）
+                for _row in trade_logger.get_unclosed_trades():
+                    _tk = _row["ticket"]
+                    if _tk is not None and _tk not in open_trade_ids:
+                        open_trade_ids[_tk] = _row["id"]
+
+                # prev_tickets を現在のオープンポジションで初期化（空集合→実ポジション）
+                for sym in models:
+                    prev_tickets[sym] = {p["ticket"] for p in _open_positions_init if p["symbol"] == sym}
+
             while self._running:
                 predictions_this_bar: dict[str, float] = {}
                 if not is_connected():

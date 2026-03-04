@@ -167,6 +167,13 @@ class TradeLogger:
             "sharpe": sharpe,
         }
 
+    def get_unclosed_trades(self) -> list[dict]:
+        """exit_price が NULL の未決済取引を返す（ticket が NULL のものは除く）."""
+        cursor = self._conn.execute(
+            "SELECT id, ticket, symbol FROM trades WHERE exit_price IS NULL AND ticket IS NOT NULL"
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
     def export_csv(self, path: str | Path) -> None:
         """全取引をCSVにエクスポート."""
         cursor = self._conn.execute("SELECT * FROM trades ORDER BY id")

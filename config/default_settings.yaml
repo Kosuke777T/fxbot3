@@ -23,7 +23,7 @@ trading:
   max_positions: 3
   prediction_horizon: 6
   min_prediction_threshold: 0.0002
-  max_lot: 0.07000000000000002
+  max_lot: 0.07
   min_lot: 0.01
   min_confidence: 0.0
   active_symbols:
@@ -81,13 +81,13 @@ trade_logging:
 market_filter:
   enabled: true
   use_adx_filter: true
-  min_adx: 20.0
+  min_adx: 25.0
   use_spread_filter: true
   max_spread_pips: 3.0
   use_volatility_filter: true
   min_atr_pct: 0.02
   max_atr_pct: 0.5
-  session_only: false
+  session_only: true
 slack:
   enabled: true
   webhook_url: ''

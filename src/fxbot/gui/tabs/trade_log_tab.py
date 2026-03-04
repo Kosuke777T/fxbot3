@@ -69,6 +69,13 @@ class TradeLogTab(QWidget):
 
         filter_layout.addStretch()
 
+        self.sync_btn = QPushButton("MT5同期")
+        self.sync_btn.setStyleSheet(
+            "QPushButton { background-color: #FF9800; color: white; padding: 4px 12px; }"
+        )
+        self.sync_btn.clicked.connect(self._sync_with_mt5)
+        filter_layout.addWidget(self.sync_btn)
+
         self.refresh_btn = QPushButton("リフレッシュ")
         self.refresh_btn.clicked.connect(self.refresh)
         filter_layout.addWidget(self.refresh_btn)
@@ -213,6 +220,63 @@ class TradeLogTab(QWidget):
         self.win_rate_label.setStyleSheet("font-size: 14px;")
         self.total_pnl_label.setText("合計損益: ---")
         self.total_pnl_label.setStyleSheet("font-size: 14px;")
+
+    def _sync_with_mt5(self):
+        """MT5履歴でDB未決済レコードを更新（ボット非稼働時の手動同期）."""
+        if not self.settings.trade_logging.enabled:
+            QMessageBox.warning(self, "同期失敗", "取引ログが無効です。")
+            return
+
+        try:
+            import MetaTrader5 as mt5
+            from fxbot.trade_logger import TradeLogger
+            from fxbot.mt5.execution import get_deal_history
+            from fxbot.risk.portfolio import get_open_positions
+
+            if not mt5.terminal_info():
+                QMessageBox.warning(self, "同期失敗", "MT5が接続されていません。\nボットを起動してから同期してください。")
+                return
+
+            db_path = self.settings.resolve_path(self.settings.trade_logging.db_path)
+            if not db_path.exists():
+                QMessageBox.warning(self, "同期失敗", "取引DBが存在しません。")
+                return
+
+            tl = TradeLogger(db_path)
+            open_tickets = {p["ticket"] for p in get_open_positions()}
+            unclosed = tl.get_unclosed_trades()
+
+            synced, failed = 0, 0
+            for row in unclosed:
+                tk = row["ticket"]
+                if tk in open_tickets:
+                    continue
+                deal = get_deal_history(tk)
+                if deal:
+                    tl.log_exit(
+                        ticket=tk,
+                        exit_price=deal["price"],
+                        exit_time=deal["time"],
+                        exit_reason=deal.get("reason", "unknown"),
+                        pnl=deal["profit"],
+                        db_row_id=row["id"],
+                    )
+                    synced += 1
+                else:
+                    failed += 1
+                    log.warning(f"MT5同期: ticket={tk} 履歴取得失敗")
+
+            tl.close()
+
+            msg = f"同期完了: {synced}件を更新"
+            if failed:
+                msg += f"、{failed}件は取得失敗（MT5履歴に未反映の可能性）"
+            QMessageBox.information(self, "MT5同期", msg)
+            self.refresh()
+
+        except Exception as e:
+            log.error(f"MT5同期エラー: {e}")
+            QMessageBox.critical(self, "同期エラー", str(e))
 
     def _export_csv(self):
         """CSVエクスポートダイアログ."""

@@ -26,7 +26,8 @@
       "Bash(uv sync:*)",
       "Bash(uv pip:*)",
       "WebFetch(domain:www.mql5.com)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(sqlite3:*)"
     ]
   }
 }

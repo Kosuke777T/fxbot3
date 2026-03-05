@@ -33,7 +33,9 @@ def calculate_lot(
     risk_cfg = settings.risk
     trading_cfg = settings.trading
 
-    risk_amount = balance * risk_cfg.max_risk_per_trade
+    # 最大ポジション数で割ることで、全ポジション満杯時も総リスクが max_risk_per_trade 以内に収まる
+    max_pos = max(trading_cfg.max_positions, 1)
+    risk_amount = balance * risk_cfg.max_risk_per_trade / max_pos
     sl_distance = atr * risk_cfg.atr_sl_multiplier
 
     if sl_distance <= 0 or np.isnan(sl_distance):
@@ -54,7 +56,15 @@ def calculate_lot(
 
     # 信頼度でロットスケーリング（高信頼度 → フルサイズ、低信頼度 → 縮小）
     lot = base_lot * scale * confidence
-    lot = max(trading_cfg.min_lot, min(trading_cfg.max_lot, lot))
+
+    # 残高連動 max_lot（設定有効時は残高に応じた動的上限を適用）
+    effective_max_lot = trading_cfg.max_lot
+    if trading_cfg.max_lot_balance_pct > 0:
+        dynamic = balance * trading_cfg.max_lot_balance_pct / 100_000
+        effective_max_lot = max(trading_cfg.min_lot, min(trading_cfg.max_lot, dynamic))
+        log.debug(f"残高連動max_lot: balance={balance:.0f} → dynamic={dynamic:.4f} effective={effective_max_lot:.4f}")
+
+    lot = max(trading_cfg.min_lot, min(effective_max_lot, lot))
     lot = round(lot, 2)
 
     return lot

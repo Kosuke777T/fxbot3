@@ -31,10 +31,13 @@ class DataConfig:
 
 @dataclass
 class TradingConfig:
-    max_positions: int = 5
+    max_positions: int = 6               # 全シンボル合計の最大ポジション数
+    max_active_symbols: int = 3          # 同時保有可能な最大通貨ペア数
+    max_positions_per_symbol: int = 2    # 1通貨ペアあたりの最大ポジション数
     prediction_horizon: int = 6
     min_prediction_threshold: float = 0.0005
     max_lot: float = 0.1
+    max_lot_balance_pct: float = 0.0     # 0.0=無効, >0で残高連動（例: 0.005=残高の0.5%）
     min_lot: float = 0.01
     min_confidence: float = 0.0  # 分類モデルの最低信頼度（0.0=無効）
     active_symbols: list[str] = field(default_factory=list)  # 最大3ペア

@@ -51,6 +51,10 @@ class DashboardTab(QWidget):
         self.pnl_label.setStyleSheet("font-size: 16px;")
         info_layout.addWidget(self.pnl_label)
 
+        self.next_lot_label = QLabel("次回ロット: ---")
+        self.next_lot_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #2196F3;")
+        info_layout.addWidget(self.next_lot_label)
+
         info_group.setLayout(info_layout)
         layout.addWidget(info_group)
 
@@ -89,8 +93,8 @@ class DashboardTab(QWidget):
         pred_layout = QVBoxLayout()
 
         self.prediction_table = QTableWidget()
-        self.prediction_table.setColumnCount(3)
-        self.prediction_table.setHorizontalHeaderLabels(["シンボル", "予測値", "方向"])
+        self.prediction_table.setColumnCount(4)
+        self.prediction_table.setHorizontalHeaderLabels(["シンボル", "予測値", "方向", "ロット"])
         self.prediction_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch
         )
@@ -173,6 +177,17 @@ class DashboardTab(QWidget):
                 color = "#4CAF50" if pnl >= 0 else "#F44336"
                 self.pnl_label.setText(f"損益: {pnl:+,.0f}")
                 self.pnl_label.setStyleSheet(f"font-size: 16px; color: {color};")
+
+                # 次回エントリーロット計算
+                tc = self.settings.trading
+                balance = info['balance']
+                pct = tc.max_lot_balance_pct
+                if pct > 0:
+                    dynamic = balance * pct / 100_000
+                    next_lot = max(tc.min_lot, min(tc.max_lot, dynamic))
+                    self.next_lot_label.setText(f"次回ロット: {next_lot:.2f}")
+                else:
+                    self.next_lot_label.setText(f"次回ロット: {tc.max_lot:.2f} (固定)")
 
             # ポジション
             positions = get_open_positions()
@@ -298,10 +313,17 @@ class DashboardTab(QWidget):
         self.model_health_label.setText(f"モデル: {reason}")
         self.model_health_label.setStyleSheet("font-size: 14px; color: gray;")
 
-    def update_predictions(self, predictions: dict[str, float]):
+    def update_predictions(self, predictions: dict):
         """予測値を更新."""
         self.prediction_table.setRowCount(len(predictions))
-        for i, (symbol, pred) in enumerate(predictions.items()):
+        for i, (symbol, data) in enumerate(predictions.items()):
+            if isinstance(data, dict):
+                pred = data["pred"]
+                lot = data.get("lot", 0.0)
+            else:
+                pred = float(data)
+                lot = 0.0
+
             self.prediction_table.setItem(i, 0, QTableWidgetItem(symbol))
             self.prediction_table.setItem(i, 1, QTableWidgetItem(f"{pred:.6f}"))
 
@@ -311,6 +333,9 @@ class DashboardTab(QWidget):
                 QColor("#4CAF50") if pred > 0 else QColor("#F44336") if pred < 0 else QColor("gray")
             )
             self.prediction_table.setItem(i, 2, dir_item)
+
+            lot_str = f"{lot:.2f}" if lot > 0 else "HOLD"
+            self.prediction_table.setItem(i, 3, QTableWidgetItem(lot_str))
 
     def refresh_auto_retrain_result(self):
         """logsディレクトリの最新 auto_retrain_*.json を読み込んで表示."""

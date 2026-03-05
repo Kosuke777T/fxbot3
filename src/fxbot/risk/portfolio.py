@@ -35,15 +35,26 @@ def get_open_positions() -> list[dict]:
 def can_open_position(symbol: str, settings: Settings) -> bool:
     """新しいポジションを建てられるか判定."""
     positions = get_open_positions()
+
+    # 全体ポジション数チェック
     if len(positions) >= settings.trading.max_positions:
         log.debug(f"最大ポジション数到達: {len(positions)}/{settings.trading.max_positions}")
         return False
 
-    # 同一シンボルの既存ポジションチェック（オプション: 制限可能）
+    # ペア別ポジション数チェック
     same_symbol = [p for p in positions if p["symbol"] == symbol]
-    if len(same_symbol) >= 2:
-        log.debug(f"{symbol}: 同一シンボルポジション上限到達")
+    max_per_sym = settings.trading.max_positions_per_symbol
+    if len(same_symbol) >= max_per_sym:
+        log.debug(f"{symbol}: ペア別最大ポジション数到達 ({len(same_symbol)}/{max_per_sym})")
         return False
+
+    # 通貨ペア数チェック（このシンボルが初ポジションの場合のみ）
+    if not same_symbol:
+        active_symbol_count = len({p["symbol"] for p in positions})
+        max_sym = settings.trading.max_active_symbols
+        if active_symbol_count >= max_sym:
+            log.debug(f"{symbol}: 最大通貨ペア数到達 ({active_symbol_count}/{max_sym})")
+            return False
 
     return True
 

@@ -102,7 +102,17 @@ class SettingsTab(QWidget):
 
         self.max_positions_spin = QSpinBox()
         self.max_positions_spin.setRange(1, 20)
-        trading_layout.addRow("最大ポジション数:", self.max_positions_spin)
+        trading_layout.addRow("最大ポジション数（全体）:", self.max_positions_spin)
+
+        self.max_active_symbols_spin = QSpinBox()
+        self.max_active_symbols_spin.setRange(1, 10)
+        self.max_active_symbols_spin.setToolTip("同時に保有できる通貨ペアの種類数")
+        trading_layout.addRow("最大通貨ペア数:", self.max_active_symbols_spin)
+
+        self.max_positions_per_symbol_spin = QSpinBox()
+        self.max_positions_per_symbol_spin.setRange(1, 10)
+        self.max_positions_per_symbol_spin.setToolTip("1通貨ペアあたりの最大保有ポジション数")
+        trading_layout.addRow("ペア別最大ポジション数:", self.max_positions_per_symbol_spin)
 
         self.prediction_horizon_spin = QSpinBox()
         self.prediction_horizon_spin.setRange(1, 50)
@@ -118,7 +128,18 @@ class SettingsTab(QWidget):
         self.max_lot_spin.setDecimals(2)
         self.max_lot_spin.setRange(0.01, 10.0)
         self.max_lot_spin.setSingleStep(0.01)
-        trading_layout.addRow("最大ロット:", self.max_lot_spin)
+        trading_layout.addRow("最大ロット（絶対上限）:", self.max_lot_spin)
+
+        self.max_lot_balance_pct_spin = QDoubleSpinBox()
+        self.max_lot_balance_pct_spin.setDecimals(3)
+        self.max_lot_balance_pct_spin.setRange(0.0, 0.05)
+        self.max_lot_balance_pct_spin.setSingleStep(0.001)
+        self.max_lot_balance_pct_spin.setToolTip(
+            "0.0=無効（最大ロット固定）\n"
+            "例: 0.005 → 残高の0.5%をロット上限に\n"
+            "balance=1,000,000 → 上限0.05lot"
+        )
+        trading_layout.addRow("残高連動ロット上限(%):", self.max_lot_balance_pct_spin)
 
         trading_group.setLayout(trading_layout)
         layout.addWidget(trading_group)
@@ -427,9 +448,12 @@ class SettingsTab(QWidget):
         self._update_account_fields(s.active_account)
 
         self.max_positions_spin.setValue(s.trading.max_positions)
+        self.max_active_symbols_spin.setValue(s.trading.max_active_symbols)
+        self.max_positions_per_symbol_spin.setValue(s.trading.max_positions_per_symbol)
         self.prediction_horizon_spin.setValue(s.trading.prediction_horizon)
         self.min_threshold_spin.setValue(s.trading.min_prediction_threshold)
         self.max_lot_spin.setValue(s.trading.max_lot)
+        self.max_lot_balance_pct_spin.setValue(s.trading.max_lot_balance_pct)
 
         self.risk_per_trade_spin.setValue(s.risk.max_risk_per_trade)
         self.atr_sl_spin.setValue(s.risk.atr_sl_multiplier)
@@ -538,9 +562,12 @@ class SettingsTab(QWidget):
         acc.password = self.password_edit.text()
 
         s.trading.max_positions = self.max_positions_spin.value()
+        s.trading.max_active_symbols = self.max_active_symbols_spin.value()
+        s.trading.max_positions_per_symbol = self.max_positions_per_symbol_spin.value()
         s.trading.prediction_horizon = self.prediction_horizon_spin.value()
         s.trading.min_prediction_threshold = self.min_threshold_spin.value()
         s.trading.max_lot = self.max_lot_spin.value()
+        s.trading.max_lot_balance_pct = self.max_lot_balance_pct_spin.value()
         s.trading.min_confidence = self.min_confidence_spin.value()
 
         s.risk.max_risk_per_trade = self.risk_per_trade_spin.value()

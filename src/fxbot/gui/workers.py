@@ -679,6 +679,9 @@ class TradingWorker(QThread):
                             h4_regime=h4_regime,
                         )
 
+                        # 予測値にロット情報を付加（ダッシュボード表示用）
+                        predictions_this_bar[sym] = {"pred": pred_val, "lot": signal.lot}
+
                         if signal.action != SignalAction.HOLD and can_open_position(sym, self.settings):
                             result = send_order(
                                 sym, signal.action.value, signal.lot, signal.sl, signal.tp

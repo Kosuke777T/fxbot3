@@ -20,14 +20,16 @@ data:
   bars_count: 10000
   cache_dir: data/ohlcv
 trading:
-  max_positions: 3
-  prediction_horizon: 6
+  max_positions: 2
+  max_active_symbols: 1
+  max_positions_per_symbol: 2
+  prediction_horizon: 12
   min_prediction_threshold: 0.0002
   max_lot: 0.07
+  max_lot_balance_pct: 0.005
   min_lot: 0.01
   min_confidence: 0.0
   active_symbols:
-  - EURJPY-
   - EURUSD-
   - USDJPY-
 risk:
@@ -81,13 +83,13 @@ trade_logging:
 market_filter:
   enabled: true
   use_adx_filter: true
-  min_adx: 25.0
+  min_adx: 20.0
   use_spread_filter: true
   max_spread_pips: 3.0
   use_volatility_filter: true
   min_atr_pct: 0.02
   max_atr_pct: 0.5
-  session_only: true
+  session_only: false
   use_h4_trend_filter: true
 slack:
   enabled: true

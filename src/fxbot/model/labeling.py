@@ -18,7 +18,7 @@ def compute_triple_barrier_labels(
     df: pd.DataFrame,
     horizon: int = 6,
     sl_mult: float = 2.0,
-    tp_mult: float = 3.0,
+    tp_mult: float = 2.0,
     vol_lookback: int = 20,
 ) -> pd.Series:
     """Triple Barrier Method でラベルを生成.

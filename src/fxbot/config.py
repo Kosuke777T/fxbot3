@@ -44,9 +44,9 @@ class TradingConfig:
 class RiskConfig:
     max_risk_per_trade: float = 0.02
     atr_sl_multiplier: float = 2.0
-    atr_tp_multiplier: float = 3.0
-    trailing_atr_multiplier: float = 1.5
-    trailing_activation_atr: float = 1.0
+    atr_tp_multiplier: float = 2.0
+    trailing_atr_multiplier: float = 1.0
+    trailing_activation_atr: float = 2.0
     trailing_update_interval: int = 60  # バー待機中のトレーリング更新間隔（秒）、0で無効
     trailing_sl_enabled: bool = True   # SL側：SLを利益方向へ追従
     trailing_tp_enabled: bool = False  # TP側：TP到達後も決済せず継続

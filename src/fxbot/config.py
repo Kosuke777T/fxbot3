@@ -67,7 +67,7 @@ class ModelConfig:
     })
     num_boost_round: int = 1000
     early_stopping_rounds: int = 50
-    shap_top_pct: float = 0.5
+    shap_top_pct: float = 0.3
     model_dir: str = "data/models"
     mode: str = "regression"  # "regression" | "classification"
 

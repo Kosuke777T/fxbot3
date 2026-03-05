@@ -52,7 +52,7 @@ model:
     verbose: -1
   num_boost_round: 1000
   early_stopping_rounds: 50
-  shap_top_pct: 0.5
+  shap_top_pct: 0.3
   model_dir: data/models
   mode: regression
 backtest:

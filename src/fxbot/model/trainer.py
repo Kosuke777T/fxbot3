@@ -34,7 +34,7 @@ def build_target_classification(
     df: pd.DataFrame,
     horizon: int = 6,
     sl_mult: float = 2.0,
-    tp_mult: float = 2.0,
+    tp_mult: float = 3.0,
     vol_lookback: int = 20,
 ) -> pd.Series:
     """Triple Barrier ラベルのターゲットを構築（分類用）.
@@ -152,6 +152,7 @@ def train_model(
         params["objective"] = "multiclass"
         params["num_class"] = 3
         params["metric"] = "multi_logloss"
+        params["is_unbalance"] = True  # クラス不均衡対策（NEUTRAL多数時）
 
     train_data = lgb.Dataset(X_train, label=y_train, weight=train_weights)
     val_data = lgb.Dataset(X_val, label=y_val, reference=train_data)

@@ -34,7 +34,7 @@ def build_target_classification(
     df: pd.DataFrame,
     horizon: int = 6,
     sl_mult: float = 2.0,
-    tp_mult: float = 2.0,
+    tp_mult: float = 3.0,
     vol_lookback: int = 20,
 ) -> pd.Series:
     """Triple Barrier ラベルのターゲットを構築（分類用）.

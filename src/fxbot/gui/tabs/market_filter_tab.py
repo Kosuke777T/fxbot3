@@ -89,6 +89,7 @@ class MarketFilterTab(QWidget):
         ("volatility", "ボラティリティ"),
         ("session", "セッションフィルター"),
         ("confidence", "信頼度チェック"),
+        ("h4_trend", "H4トレンドフィルター"),
     ]
 
     def __init__(self, settings: Settings, parent=None):

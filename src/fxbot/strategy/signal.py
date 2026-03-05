@@ -52,6 +52,7 @@ def get_filter_statuses(
     spread_pips: float = 0.0,
     current_hour_utc: int | None = None,
     regime: str = "trend_up",
+    h4_regime: str = "ranging",
 ) -> list[FilterStatus]:
     """各フィルターの状態を計算して返す（副作用なし）."""
     mf = settings.market_filter
@@ -168,6 +169,27 @@ def get_filter_statuses(
         reason=f"{confidence:.4f} < {min_conf:.2f}" if not conf_passed else "",
     ))
 
+    # --- H4トレンドフィルター ---
+    use_h4 = mf.use_h4_trend_filter if mf.enabled else False
+    h4_passed = True
+    h4_reason = ""
+    if use_h4 and h4_regime != "ranging":
+        if h4_regime == "trend_up" and prediction < 0:
+            h4_passed = False
+            h4_reason = "H4上昇トレンド中にSELLシグナル"
+        elif h4_regime == "trend_down" and prediction > 0:
+            h4_passed = False
+            h4_reason = "H4下降トレンド中にBUYシグナル"
+    statuses.append(FilterStatus(
+        filter_name="h4_trend",
+        display_name="H4トレンドフィルター",
+        enabled=use_h4,
+        passed=h4_passed,
+        current_value=f"H4: {h4_regime}",
+        threshold_str="上位足と同方向のみ",
+        reason=h4_reason,
+    ))
+
     return statuses
 
 
@@ -198,6 +220,7 @@ def generate_signal(
     spread_pips: float = 0.0,
     current_hour_utc: int | None = None,
     regime: str = "trend_up",
+    h4_regime: str = "ranging",
 ) -> TradeSignal:
     """予測値からトレードシグナルを生成.
 
@@ -246,6 +269,15 @@ def generate_signal(
                 log.debug(f"セッション外でHOLD: {symbol} UTC={current_hour_utc}時")
                 return _make_hold(symbol, prediction, "session_outside")
 
+        # H4トレンドフィルター
+        if mf.use_h4_trend_filter and h4_regime != "ranging":
+            if h4_regime == "trend_up" and prediction < 0:
+                log.debug(f"H4上昇トレンド中にSELLブロック: {symbol} h4_regime={h4_regime}")
+                return _make_hold(symbol, prediction, "h4_trend_conflict")
+            elif h4_regime == "trend_down" and prediction > 0:
+                log.debug(f"H4下降トレンド中にBUYブロック: {symbol} h4_regime={h4_regime}")
+                return _make_hold(symbol, prediction, "h4_trend_conflict")
+
     # --- 信頼度チェック（分類モデル使用時）---
     if confidence < min_confidence:
         log.debug(f"信頼度不足でHOLD: {symbol} confidence={confidence:.4f} < {min_confidence}")
@@ -276,5 +308,5 @@ def generate_signal(
 
     log.info(f"シグナル生成: {signal.action.value.upper()} {symbol} "
              f"pred={prediction:.6f} conf={confidence:.4f} lot={lot} "
-             f"SL={stops.sl:.5f} TP={stops.tp:.5f} regime={regime}")
+             f"SL={stops.sl:.5f} TP={stops.tp:.5f} regime={regime} h4={h4_regime}")
     return signal

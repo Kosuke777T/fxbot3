@@ -635,6 +635,13 @@ class TradingWorker(QThread):
                             else:
                                 regime = "trend_up"
 
+                        # H4レジーム判定
+                        h4_regime = "ranging"
+                        if "h4_regime_trend_up" in fm.columns and fm["h4_regime_trend_up"].iloc[-1]:
+                            h4_regime = "trend_up"
+                        elif "h4_regime_trend_down" in fm.columns and fm["h4_regime_trend_down"].iloc[-1]:
+                            h4_regime = "trend_down"
+
                         # 現在時刻（UTC）
                         current_hour_utc = datetime.utcnow().hour
 
@@ -646,6 +653,7 @@ class TradingWorker(QThread):
                             spread_pips=spread_pips,
                             current_hour_utc=current_hour_utc,
                             regime=regime,
+                            h4_regime=h4_regime,
                         )
                         base_tf = self.settings.data.base_timeframe
                         ohlcv_df = data.get(base_tf, pd.DataFrame()).iloc[-100:].copy()
@@ -668,6 +676,7 @@ class TradingWorker(QThread):
                             spread_pips=spread_pips,
                             current_hour_utc=current_hour_utc,
                             regime=regime,
+                            h4_regime=h4_regime,
                         )
 
                         if signal.action != SignalAction.HOLD and can_open_position(sym, self.settings):

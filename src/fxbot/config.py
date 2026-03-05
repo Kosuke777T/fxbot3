@@ -102,6 +102,8 @@ class MarketFilterConfig:
     max_atr_pct: float = 0.5       # ATR%がこれを超えたら過大ボラでHOLD
     # セッションフィルター
     session_only: bool = False     # Trueでロンドン・NYセッションのみ取引
+    # H4トレンドフィルター
+    use_h4_trend_filter: bool = True  # 上位足(H4)と逆行するシグナルをブロック
 
 
 @dataclass

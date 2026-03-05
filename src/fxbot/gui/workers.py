@@ -788,12 +788,13 @@ class TradingWorker(QThread):
 
         risk_cfg = self.settings.risk
 
+        positions = get_open_positions()  # ループ外で一度だけ取得
+
         for sym in models:
             try:
                 atr = last_atr.get(sym, 0.0)
                 if atr <= 0.0:
                     continue
-                positions = get_open_positions()
                 for pos in positions:
                     if pos["symbol"] != sym:
                         continue
@@ -801,17 +802,19 @@ class TradingWorker(QThread):
                     # TP側トレーリング: 価格がTPを越えたらMT5のTPを外す
                     if risk_cfg.trailing_tp_enabled:
                         if pos["type"] == "buy" and pos["tp"] > 0 and pos["price_current"] >= pos["tp"]:
-                            modify_position(pos["ticket"], tp=0.0)
-                            tp_triggered.add(pos["ticket"])
-                            log.debug(
-                                f"TP側トレーリング発動: {sym} ticket={pos['ticket']} tp解除"
-                            )
+                            ok = modify_position(pos["ticket"], tp=0.0)
+                            if ok:
+                                tp_triggered.add(pos["ticket"])
+                                log.info(f"TP側トレーリング発動: {sym} ticket={pos['ticket']} tp解除")
+                            else:
+                                log.warning(f"TP側トレーリング失敗: {sym} ticket={pos['ticket']} tp解除")
                         elif pos["type"] == "sell" and pos["tp"] > 0 and pos["price_current"] <= pos["tp"]:
-                            modify_position(pos["ticket"], tp=0.0)
-                            tp_triggered.add(pos["ticket"])
-                            log.debug(
-                                f"TP側トレーリング発動: {sym} ticket={pos['ticket']} tp解除"
-                            )
+                            ok = modify_position(pos["ticket"], tp=0.0)
+                            if ok:
+                                tp_triggered.add(pos["ticket"])
+                                log.info(f"TP側トレーリング発動: {sym} ticket={pos['ticket']} tp解除")
+                            else:
+                                log.warning(f"TP側トレーリング失敗: {sym} ticket={pos['ticket']} tp解除")
 
                     # SL側トレーリング
                     if risk_cfg.trailing_sl_enabled:
@@ -825,11 +828,12 @@ class TradingWorker(QThread):
                             pos["price_open"], pos["sl"], stops,
                         )
                         if new_sl is not None:
-                            modify_position(pos["ticket"], sl=new_sl)
-                            trailing_activated.add(pos["ticket"])
-                            log.debug(
-                                f"トレーリング更新: {sym} ticket={pos['ticket']} new_sl={new_sl:.5f}"
-                            )
+                            ok = modify_position(pos["ticket"], sl=new_sl)
+                            if ok:
+                                trailing_activated.add(pos["ticket"])
+                                log.info(f"トレーリングSL更新成功: {sym} ticket={pos['ticket']} new_sl={new_sl:.5f}")
+                            else:
+                                log.warning(f"トレーリングSL更新失敗: {sym} ticket={pos['ticket']} new_sl={new_sl:.5f}")
             except Exception as e:
                 log.error(f"トレーリング更新エラー ({sym}): {e}")
 

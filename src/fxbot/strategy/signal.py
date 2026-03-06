@@ -191,6 +191,20 @@ def get_filter_statuses(
         reason=h4_reason,
     ))
 
+    # --- 予測値閾値 ---
+    thr = settings.trading.min_prediction_threshold
+    pred_abs = abs(prediction)
+    pred_passed = pred_abs >= thr
+    statuses.append(FilterStatus(
+        filter_name="prediction_threshold",
+        display_name="予測値閾値",
+        enabled=True,
+        passed=pred_passed,
+        current_value=f"{pred_abs:.6f}",
+        threshold_str=f"{thr:.6f}",
+        reason=f"{pred_abs:.6f} < {thr:.6f}" if not pred_passed else "",
+    ))
+
     return statuses
 
 

@@ -90,6 +90,7 @@ class MarketFilterTab(QWidget):
         ("session", "セッションフィルター"),
         ("confidence", "信頼度チェック"),
         ("h4_trend", "H4トレンドフィルター"),
+        ("prediction_threshold", "予測値閾値"),
     ]
 
     def __init__(self, settings: Settings, parent=None):

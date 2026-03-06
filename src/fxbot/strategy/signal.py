@@ -157,8 +157,9 @@ def get_filter_statuses(
 
     # --- 信頼度チェック ---
     min_conf = settings.trading.min_confidence
-    conf_enabled = min_conf > 0.0
-    conf_passed = confidence >= min_conf
+    is_clf = settings.model.mode == "classification"
+    conf_enabled = is_clf and min_conf > 0.0
+    conf_passed = (not conf_enabled) or confidence >= min_conf
     statuses.append(FilterStatus(
         filter_name="confidence",
         display_name="信頼度チェック",
@@ -278,8 +279,8 @@ def generate_signal(
                 log.debug(f"H4下降トレンド中にBUYブロック: {symbol} h4_regime={h4_regime}")
                 return _make_hold(symbol, prediction, "h4_trend_conflict")
 
-    # --- 信頼度チェック（分類モデル使用時）---
-    if confidence < min_confidence:
+    # --- 信頼度チェック（classificationモードのみ）---
+    if settings.model.mode == "classification" and confidence < min_confidence:
         log.debug(f"信頼度不足でHOLD: {symbol} confidence={confidence:.4f} < {min_confidence}")
         return _make_hold(symbol, prediction, "confidence_low")
 

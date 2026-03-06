@@ -119,3 +119,38 @@ def fetch_multi_timeframe(
         else:
             log.warning(f"  → データなし")
     return result
+
+
+_BARS_PER_DAY: dict[str, float] = {
+    "M1": 1440, "M5": 288, "M15": 96, "M30": 48,
+    "H1": 24, "H4": 6, "D1": 1, "W1": 0.2,
+}
+
+
+def days_to_bars(timeframe: str, days: int) -> int:
+    """カレンダー日数 → MT5バー数に変換（週末除外 + 20%バッファ）."""
+    bpd = _BARS_PER_DAY.get(timeframe, 288)
+    return max(int(days * (5 / 7) * bpd * 1.2), 500)
+
+
+def fetch_for_wfo(symbol: str, settings: Settings) -> dict[str, pd.DataFrame]:
+    """WFOに十分なデータを取得してキャッシュ更新し返す.
+
+    train_window_days + test_window_days + 30日バッファ分を各TFで取得。
+    """
+    days_needed = (
+        settings.backtest.train_window_days
+        + settings.backtest.test_window_days
+        + 30
+    )
+    timeframes = [settings.data.base_timeframe] + settings.data.higher_timeframes
+    result = {}
+    for tf in timeframes:
+        bars = days_to_bars(tf, days_needed)
+        log.info(f"WFO用データ取得: {symbol} {tf} {bars}バー ({days_needed}日分)")
+        df = fetch_and_cache(symbol, tf, settings, bars=bars)
+        if not df.empty:
+            result[tf] = df
+        else:
+            log.warning(f"WFO用データ取得失敗: {symbol} {tf}")
+    return result

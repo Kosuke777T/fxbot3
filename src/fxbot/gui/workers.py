@@ -122,18 +122,23 @@ class BacktestWorker(QThread):
     """バックテストワーカー."""
     signals = WorkerSignals()
 
-    def __init__(self, multi_tf_data: dict, settings: Settings, parent=None):
+    def __init__(self, symbol: str, settings: Settings, parent=None):
         super().__init__(parent)
-        self.multi_tf_data = multi_tf_data
+        self.symbol = symbol
         self.settings = settings
 
     def run(self):
         try:
             self.signals.started.emit()
+            self.signals.progress.emit(f"WFO用データ取得中: {self.symbol}...")
+
+            from fxbot.mt5.data_feed import fetch_for_wfo
+            multi_tf_data = fetch_for_wfo(self.symbol, self.settings)
+
             self.signals.progress.emit("WFO実行中...")
 
             from fxbot.backtest.wfo import run_wfo
-            result = run_wfo(self.multi_tf_data, self.settings)
+            result = run_wfo(multi_tf_data, self.settings)
 
             from fxbot import notifier as _slack
             _n = _slack.get()
@@ -171,7 +176,7 @@ class ComparisonWorker(QThread):
         import copy
         from fxbot.backtest.wfo import run_wfo, replay_with_threshold
         from fxbot.backtest.metrics import calc_all_metrics
-        from fxbot.mt5.data_feed import fetch_multi_timeframe
+        from fxbot.mt5.data_feed import fetch_for_wfo
         import pandas as pd
 
         try:
@@ -179,7 +184,7 @@ class ComparisonWorker(QThread):
 
             # Step 0: データ取得
             self.signals.progress.emit(f"[比較BT] {self.symbol} データ取得中...")
-            multi_tf_data = fetch_multi_timeframe(self.symbol, self.settings)
+            multi_tf_data = fetch_for_wfo(self.symbol, self.settings)
 
             # Step 1: 回帰WFO
             self.signals.progress.emit("[比較BT] 回帰WFO実行中 (1/2)...")
@@ -236,6 +241,11 @@ class WeekendRetrainWorker(QThread):
         try:
             self.signals.started.emit()
             rt_cfg = self.settings.retraining
+
+            # Step 0: WFO用データ取得
+            self.signals.progress.emit(f"週末自動再学習: データ取得中 ({self.symbol})...")
+            from fxbot.mt5.data_feed import fetch_for_wfo
+            self.multi_tf_data = fetch_for_wfo(self.symbol, self.settings)
 
             # Step 1: WFO実行
             self.signals.progress.emit("週末自動再学習: WFO実行中...")
@@ -418,6 +428,8 @@ class TradingWorker(QThread):
             # 決済履歴取得に失敗したチケットのリトライキュー
             pending_exits: dict[int, dict] = {}
             MAX_EXIT_RETRIES = 5
+            # モデル劣化フラグ（劣化検知時に新規エントリーを停止）
+            model_degraded = False
 
             # 起動時同期: MT5履歴でDB未決済レコードを更新
             if trade_logger:
@@ -605,6 +617,10 @@ class TradingWorker(QThread):
                             pred_val = float(direction) * confidence  # 方向 × 信頼度を予測値として使用
                         else:
                             pred_val = predictor.predict_latest(fm)
+                            # 回帰モードでは予測強度を信頼度代替として計算
+                            # threshold の3倍で confidence=1.0 になるよう正規化
+                            _thr = self.settings.trading.min_prediction_threshold
+                            confidence = min(abs(pred_val) / max(_thr * 3.0, 1e-10), 1.0)
 
                         predictions_this_bar[sym] = pred_val
 
@@ -682,7 +698,7 @@ class TradingWorker(QThread):
                         # 予測値にロット情報を付加（ダッシュボード表示用）
                         predictions_this_bar[sym] = {"pred": pred_val, "lot": signal.lot}
 
-                        if signal.action != SignalAction.HOLD and can_open_position(sym, self.settings):
+                        if signal.action != SignalAction.HOLD and can_open_position(sym, self.settings) and not model_degraded:
                             result = send_order(
                                 sym, signal.action.value, signal.lot, signal.sl, signal.tp
                             )
@@ -754,14 +770,22 @@ class TradingWorker(QThread):
                     result = model_monitor.check()
                     if not result["healthy"]:
                         m = result["metrics"]
+                        if not model_degraded:
+                            # 初回劣化検知時のみSlack通知
+                            _n = _slack.get()
+                            if _n:
+                                _n.notify_model_degraded(result["warnings"])
+                        model_degraded = True
                         self.signals.progress.emit(
-                            f"モデル劣化検知: 勝率={m.get('win_rate', 0):.1%} "
-                            f"Sharpe={m.get('sharpe', 0):.2f} → 再学習推奨"
+                            f"[劣化停止中] 勝率={m.get('win_rate', 0):.1%} "
+                            f"Sharpe={m.get('sharpe', 0):.2f} — 新規エントリー停止"
                         )
-                        log.warning(f"モデル劣化: {result['warnings']}")
-                        _n = _slack.get()
-                        if _n:
-                            _n.notify_model_degraded(result["warnings"])
+                        log.warning(f"モデル劣化: 新規エントリー停止 {result['warnings']}")
+                    else:
+                        if model_degraded:
+                            log.info("モデル性能回復: 新規エントリー再開")
+                            self.signals.progress.emit("モデル性能回復: 新規エントリー再開")
+                        model_degraded = False
 
                 # トレーリングストップ更新（バー確定タイミング）
                 self._update_trailing_stops(models, last_atr, trailing_activated, tp_triggered)
@@ -784,7 +808,7 @@ class TradingWorker(QThread):
         """全オープンポジションのトレーリングSLを更新してMT5に反映."""
         from fxbot.risk.portfolio import get_open_positions
         from fxbot.risk.stop_manager import update_trailing_stop, StopLevels
-        from fxbot.mt5.execution import modify_position
+        from fxbot.mt5.execution import modify_position, normalize_price
 
         risk_cfg = self.settings.risk
 
@@ -828,12 +852,17 @@ class TradingWorker(QThread):
                             pos["price_open"], pos["sl"], stops,
                         )
                         if new_sl is not None:
-                            ok = modify_position(pos["ticket"], sl=new_sl)
-                            if ok:
-                                trailing_activated.add(pos["ticket"])
-                                log.info(f"トレーリングSL更新成功: {sym} ticket={pos['ticket']} new_sl={new_sl:.5f}")
+                            # ティックサイズ正規化後に現在SLと同値なら送信しない
+                            new_sl_norm = normalize_price(sym, new_sl)
+                            if new_sl_norm == normalize_price(sym, pos["sl"]):
+                                log.debug(f"トレーリングSL変化なし（正規化後同値）: {sym} ticket={pos['ticket']} sl={new_sl_norm}")
                             else:
-                                log.warning(f"トレーリングSL更新失敗: {sym} ticket={pos['ticket']} new_sl={new_sl:.5f}")
+                                ok = modify_position(pos["ticket"], sl=new_sl_norm)
+                                if ok:
+                                    trailing_activated.add(pos["ticket"])
+                                    log.info(f"トレーリングSL更新成功: {sym} ticket={pos['ticket']} new_sl={new_sl_norm}")
+                                else:
+                                    log.warning(f"トレーリングSL更新失敗: {sym} ticket={pos['ticket']} new_sl={new_sl_norm}")
             except Exception as e:
                 log.error(f"トレーリング更新エラー ({sym}): {e}")
 

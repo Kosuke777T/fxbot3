@@ -33,18 +33,30 @@ class SlackNotifier:
         if not self._cfg.enabled or not self._cfg.webhook_url:
             return False
         payload = json.dumps({"text": text}).encode()
-        req = urllib.request.Request(
-            self._cfg.webhook_url,
-            data=payload,
-            headers={"Content-Type": "application/json"},
-        )
-        try:
-            ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-            with urllib.request.urlopen(req, timeout=5, context=ssl_ctx) as resp:
-                return resp.status == 200
-        except Exception as e:
-            log.warning(f"Slack通知失敗: {e}")
-            return False
+
+        # SSL証明書: certifi → システム証明書の順でフォールバック
+        ssl_contexts = [
+            ssl.create_default_context(cafile=certifi.where()),
+            ssl.create_default_context(),  # システム証明書ストア
+        ]
+        for ssl_ctx in ssl_contexts:
+            req = urllib.request.Request(
+                self._cfg.webhook_url,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=5, context=ssl_ctx) as resp:
+                    return resp.status == 200
+            except ssl.SSLError as e:
+                log.debug(f"SSL証明書エラー、次の証明書ストアで再試行: {e}")
+                continue
+            except Exception as e:
+                log.warning(f"Slack通知失敗: {e}")
+                return False
+
+        log.warning("Slack通知失敗: SSL証明書エラー（certifi・システム両方失敗）")
+        return False
 
     def notify_entry(self, symbol, direction, lot, price, sl, tp, confidence=None, model_version=None):
         if not self._cfg.notify_entry:

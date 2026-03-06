@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import MetaTrader5 as mt5
 
 from fxbot.config import AccountConfig, Settings
@@ -23,36 +25,54 @@ TIMEFRAME_MAP: dict[str, int] = {
 }
 
 
-def connect(settings: Settings) -> bool:
-    """MT5に接続しログインする."""
+def connect(settings: Settings, max_retries: int = 3) -> bool:
+    """MT5に接続しログインする.
+
+    失敗時は指数バックオフで最大 max_retries 回リトライする。
+    """
     account = settings.current_account
-    log.info("MT5初期化中...")
 
-    if not mt5.initialize():
-        log.error(f"MT5初期化失敗: {mt5.last_error()}")
-        return False
+    for attempt in range(1, max_retries + 1):
+        log.info(f"MT5初期化中... (試行 {attempt}/{max_retries})")
 
-    log.info("MT5初期化成功")
+        if not mt5.initialize():
+            err = mt5.last_error()
+            log.error(f"MT5初期化失敗 (試行 {attempt}/{max_retries}): {err}")
+            if attempt < max_retries:
+                wait = 2 ** attempt  # 2, 4, 8秒
+                log.info(f"MT5再接続待機: {wait}秒")
+                time.sleep(wait)
+            continue
 
-    if account.login and account.password:
-        authorized = mt5.login(
-            login=account.login,
-            password=account.password,
-            server=account.server,
-        )
-        if not authorized:
-            log.error(f"MT5ログイン失敗: {mt5.last_error()}")
-            mt5.shutdown()
-            return False
-        log.info(f"MT5ログイン成功: {account.server} (口座: {account.login})")
-    else:
-        log.info("ログイン情報未設定 — デフォルト口座で接続")
+        log.info("MT5初期化成功")
 
-    info = mt5.account_info()
-    if info:
-        log.info(f"口座残高: {info.balance} {info.currency}, レバレッジ: 1:{info.leverage}")
+        if account.login and account.password:
+            authorized = mt5.login(
+                login=account.login,
+                password=account.password,
+                server=account.server,
+            )
+            if not authorized:
+                err = mt5.last_error()
+                log.error(f"MT5ログイン失敗 (試行 {attempt}/{max_retries}): {err}")
+                mt5.shutdown()
+                if attempt < max_retries:
+                    wait = 2 ** attempt
+                    log.info(f"MT5再接続待機: {wait}秒")
+                    time.sleep(wait)
+                continue
+            log.info(f"MT5ログイン成功: {account.server} (口座: {account.login})")
+        else:
+            log.info("ログイン情報未設定 — デフォルト口座で接続")
 
-    return True
+        info = mt5.account_info()
+        if info:
+            log.info(f"口座残高: {info.balance} {info.currency}, レバレッジ: 1:{info.leverage}")
+
+        return True
+
+    log.error(f"MT5接続失敗: {max_retries}回リトライ後も接続できませんでした")
+    return False
 
 
 def disconnect() -> None:

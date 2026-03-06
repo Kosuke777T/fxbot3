@@ -9,6 +9,22 @@ from fxbot.logger import get_logger
 log = get_logger(__name__)
 
 
+def normalize_price(symbol: str, price: float) -> float:
+    """MT5のティックサイズに合わせて価格を正規化する.
+
+    float精度のまま送信するとMT5が内部正規化した結果が現在値と同値になり
+    retcode=10025 (No changes) が返るのを防ぐ。
+    """
+    info = mt5.symbol_info(symbol)
+    if info is None:
+        return round(price, 5)
+    tick_size = info.trade_tick_size
+    digits = info.digits
+    if tick_size <= 0:
+        return round(price, digits)
+    return round(round(price / tick_size) * tick_size, digits)
+
+
 def _get_filling_type(symbol_info) -> int:
     """シンボルがサポートする約定方式を自動判定."""
     filling = symbol_info.filling_mode
@@ -98,20 +114,30 @@ def modify_position(
         return False
 
     pos = position[0]
+
+    # MT5のティックサイズに正規化（float精度そのままだとretcode=10025になる）
+    new_sl = normalize_price(pos.symbol, sl) if sl is not None else pos.sl
+    new_tp = normalize_price(pos.symbol, tp) if tp is not None else pos.tp
+
+    # 正規化後に現在値と同じなら送信不要（retcode=10025回避）
+    if new_sl == pos.sl and new_tp == pos.tp:
+        log.debug(f"SL/TP変更なし（正規化後同値）: ticket={ticket} sl={new_sl} tp={new_tp}")
+        return True
+
     request = {
         "action": mt5.TRADE_ACTION_SLTP,
         "position": ticket,
         "symbol": pos.symbol,
-        "sl": sl if sl is not None else pos.sl,
-        "tp": tp if tp is not None else pos.tp,
+        "sl": new_sl,
+        "tp": new_tp,
     }
 
     result = mt5.order_send(request)
     if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-        log.error(f"ポジション変更失敗: {result}")
+        log.error(f"ポジション変更失敗: retcode={getattr(result, 'retcode', None)} {result}")
         return False
 
-    log.info(f"ポジション変更: ticket={ticket}, SL={sl}, TP={tp}")
+    log.info(f"ポジション変更: ticket={ticket}, SL={new_sl}, TP={new_tp}")
     return True
 
 

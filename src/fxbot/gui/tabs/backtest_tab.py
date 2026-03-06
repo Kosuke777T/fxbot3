@@ -146,14 +146,15 @@ class BacktestTab(QWidget):
     #  WFO                                                                 #
     # ------------------------------------------------------------------ #
     def _run_backtest(self):
-        if self.multi_tf_data is None:
-            self.status_label.setText("先にデータを取得してください")
+        symbol = self.symbol_combo.currentText()
+        if not symbol:
+            self.status_label.setText("シンボルを選択してください")
             return
 
         self.run_btn.setEnabled(False)
-        self.status_label.setText("WFO実行中...")
+        self.status_label.setText(f"データ取得+WFO実行中... ({symbol})")
 
-        self.worker = BacktestWorker(self.multi_tf_data, self.settings)
+        self.worker = BacktestWorker(symbol, self.settings)
         self.worker.signals.progress.connect(self._on_progress)
         self.worker.signals.finished.connect(self._on_wfo_finished)
         self.worker.signals.error.connect(self._on_wfo_error)

@@ -28,7 +28,7 @@ trading:
   max_lot: 1.0
   max_lot_balance_pct: 0.01
   min_lot: 0.01
-  min_confidence: 0.5
+  min_confidence: 0.0
   active_symbols:
   - EURJPY-
   - EURUSD-

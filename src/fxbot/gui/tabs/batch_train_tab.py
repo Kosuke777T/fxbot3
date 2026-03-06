@@ -1,4 +1,4 @@
-"""一括学習タブ — active_symbols を順番に自動学習."""
+"""一括学習タブ — active_symbols を順番に WFO→学習."""
 
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ class BatchTrainTab(QWidget):
         layout.addWidget(self.progress_bar)
 
         # --- 開始ボタン ---
-        self._start_btn = QPushButton("一括学習開始")
+        self._start_btn = QPushButton("一括WFO+学習開始")
         self._start_btn.setEnabled(False)
         self._start_btn.setStyleSheet(
             "QPushButton { background-color: #1976D2; color: white; "
@@ -160,58 +160,32 @@ class BatchTrainTab(QWidget):
     def _train_next(self):
         if not self._queue:
             self._start_btn.setEnabled(True)
-            log.info("一括学習完了")
+            log.info("一括WFO+学習完了")
             return
 
         sym = self._queue.pop(0)
         batch_id = self._batch_id
         self._set_status(sym, "データ取得中...", _COLOR_ACTIVE)
 
-        from fxbot.gui.workers import DataFetchWorker
+        from fxbot.gui.workers import WeekendRetrainWorker
 
-        worker = DataFetchWorker(sym, self.settings)
-
-        # processed フラグでシグナル多重発火を防ぐ
-        fetched = [False]
-
-        def on_fetched(data, s=sym, bid=batch_id):
-            if fetched[0] or bid != self._batch_id:
-                return
-            fetched[0] = True
-            self._on_fetched(s, data, bid)
-
-        def on_fetch_error(e, s=sym, bid=batch_id):
-            if fetched[0] or bid != self._batch_id:
-                return
-            fetched[0] = True
-            self._on_error(s, e, bid)
-
-        worker.signals.finished.connect(on_fetched)
-        worker.signals.error.connect(on_fetch_error)
-        worker.start()
-        self._workers[sym] = worker
-
-    def _on_fetched(self, sym: str, data: dict, batch_id: int) -> None:
-        self._set_status(sym, "学習中...", _COLOR_ACTIVE)
-
-        from fxbot.gui.workers import TrainWorker
-
-        worker = TrainWorker(data, sym, self.settings)
+        # multi_tf_data は WeekendRetrainWorker.run() 内で fetch_for_wfo により上書きされる
+        worker = WeekendRetrainWorker({}, sym, self.settings)
 
         done = [False]
 
         def on_progress(msg, s=sym, bid=batch_id):
             if bid != self._batch_id:
                 return
-            self._set_status(s, "学習中", _COLOR_ACTIVE, msg)
+            self._set_status(s, "実行中", _COLOR_ACTIVE, msg)
 
         def on_done(result, s=sym, bid=batch_id):
             if done[0] or bid != self._batch_id:
                 return
             done[0] = True
-            self._on_done(s, bid)
+            self._on_done(s, result, bid)
 
-        def on_train_error(e, s=sym, bid=batch_id):
+        def on_error(e, s=sym, bid=batch_id):
             if done[0] or bid != self._batch_id:
                 return
             done[0] = True
@@ -219,15 +193,27 @@ class BatchTrainTab(QWidget):
 
         worker.signals.progress.connect(on_progress)
         worker.signals.finished.connect(on_done)
-        worker.signals.error.connect(on_train_error)
+        worker.signals.error.connect(on_error)
         worker.start()
         self._workers[sym] = worker
 
-    def _on_done(self, sym: str, batch_id: int) -> None:
-        self._set_status(sym, "✓ 完了", _COLOR_DONE)
+    def _on_done(self, sym: str, result: dict, batch_id: int) -> None:
+        trained = result.get("trained", False)
+        wfo_win = result.get("wfo_win_rate", 0.0)
+        wfo_sh = result.get("wfo_sharpe", 0.0)
+        if trained:
+            status_text = "✓ WFO+学習完了"
+            color = _COLOR_DONE
+            progress_text = f"勝率={wfo_win:.1%} Sharpe={wfo_sh:.2f}"
+        else:
+            reason = result.get("reason", "WFO未達")
+            status_text = "△ WFO未達(学習スキップ)"
+            color = "#FF9800"
+            progress_text = reason
+        self._set_status(sym, status_text, color, progress_text)
         self._completed += 1
         self.progress_bar.setValue(int(self._completed / self._total * 100))
-        log.info(f"一括学習完了: {sym}")
+        log.info(f"一括WFO+学習完了: {sym} trained={trained}")
         self._train_next()
 
     def _on_error(self, sym: str, error_msg: str, batch_id: int) -> None:

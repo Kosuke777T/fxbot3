@@ -122,6 +122,7 @@ class RetrainingConfig:
     run_wfo_before_train: bool = True  # 学習前にWFOを実行
     wfo_min_win_rate: float = 0.45     # WFO合格基準（勝率）
     wfo_min_sharpe: float = 0.3        # WFO合格基準（シャープ）
+    wfo_max_consecutive_failures: int = 3  # 連続未達N回でライブ自動停止
 
 
 @dataclass

@@ -73,6 +73,7 @@ retraining:
   run_wfo_before_train: true
   wfo_min_win_rate: 0.45
   wfo_min_sharpe: 0.3
+  wfo_max_consecutive_failures: 3
 logging:
   level: INFO
   file: data/fxbot.log

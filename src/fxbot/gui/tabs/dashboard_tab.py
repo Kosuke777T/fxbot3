@@ -137,6 +137,10 @@ class DashboardTab(QWidget):
         self.retrain_status_label = QLabel("結果: ---")
         retrain_layout.addWidget(self.retrain_status_label)
 
+        self.retrain_consecutive_label = QLabel("")
+        self.retrain_consecutive_label.setVisible(False)
+        retrain_layout.addWidget(self.retrain_consecutive_label)
+
         retrain_group.setLayout(retrain_layout)
         layout.addWidget(retrain_group)
 
@@ -366,6 +370,30 @@ class DashboardTab(QWidget):
             else:
                 self.retrain_status_label.setText(f"結果: スキップ ({reason})")
                 self.retrain_status_label.setStyleSheet("color: #FF9800;")
+
+            # 連続未達カウント
+            consecutive = 0
+            for f in sorted(files, reverse=True):
+                try:
+                    d = json.loads(f.read_text(encoding="utf-8"))
+                    if d.get("trained", True):
+                        break
+                    consecutive += 1
+                except Exception:
+                    break
+
+            max_fail = self.settings.retraining.wfo_max_consecutive_failures
+            if consecutive > 0:
+                stopped = consecutive >= max_fail
+                label_text = f"連続未達: {consecutive}/{max_fail}回"
+                if stopped:
+                    label_text += " ⚠ ライブ自動停止済"
+                color = "#F44336" if stopped else "#FF9800"
+                self.retrain_consecutive_label.setText(label_text)
+                self.retrain_consecutive_label.setStyleSheet(f"color: {color}; font-weight: bold;")
+                self.retrain_consecutive_label.setVisible(True)
+            else:
+                self.retrain_consecutive_label.setVisible(False)
         except Exception as e:
             log.debug(f"自動再学習結果更新スキップ: {e}")
 

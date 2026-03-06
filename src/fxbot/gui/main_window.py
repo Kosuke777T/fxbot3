@@ -343,7 +343,31 @@ class MainWindow(QMainWindow):
         reason = result.get("reason", "")
         log.info(f"週末自動再学習完了: trained={trained}, reason={reason}")
 
+        if not trained:
+            consecutive = self._count_consecutive_wfo_failures()
+            max_fail = self.settings.retraining.wfo_max_consecutive_failures
+            log.warning(f"WFO連続未達: {consecutive}回 (閾値: {max_fail}回)")
+            if consecutive >= max_fail and self.trading_worker is not None:
+                log.warning(f"WFO連続未達{consecutive}回に達したためライブ取引を自動停止")
+                self._stop_trading()
+
         self.dashboard_tab.refresh_auto_retrain_result()
+
+    def _count_consecutive_wfo_failures(self) -> int:
+        """直近の auto_retrain ログから連続WFO未達回数を数える（最新ログ含む）."""
+        import json
+        log_dir = self.settings.resolve_path("logs")
+        files = sorted(log_dir.glob("auto_retrain_*.json"), reverse=True)
+        count = 0
+        for f in files:
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                if data.get("trained", True):
+                    break
+                count += 1
+            except Exception:
+                break
+        return count
 
     def _on_weekend_retrain_error(self, msg: str):
         """週末再学習エラー."""

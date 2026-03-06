@@ -264,11 +264,12 @@ class WeekendRetrainWorker(QThread):
                   and wfo_sharpe >= rt_cfg.wfo_min_sharpe)
 
             if not ok:
-                reason = (
-                    f"WFO基準未達 "
-                    f"(勝率{wfo_win_rate:.1%}<{rt_cfg.wfo_min_win_rate:.1%} "
-                    f"or Sharpe{wfo_sharpe:.2f}<{rt_cfg.wfo_min_sharpe:.2f})"
-                )
+                fail_parts = []
+                if wfo_win_rate < rt_cfg.wfo_min_win_rate:
+                    fail_parts.append(f"勝率{wfo_win_rate:.1%}<{rt_cfg.wfo_min_win_rate:.1%}")
+                if wfo_sharpe < rt_cfg.wfo_min_sharpe:
+                    fail_parts.append(f"Sharpe{wfo_sharpe:.2f}<{rt_cfg.wfo_min_sharpe:.2f}")
+                reason = "WFO基準未達: " + " / ".join(fail_parts)
                 self.signals.progress.emit(f"週末自動再学習: {reason} → スキップ")
                 self.signals.finished.emit({
                     "wfo_result": wfo_result,

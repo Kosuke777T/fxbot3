@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QTabWidget,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -125,9 +126,26 @@ class StrategyAnalysisTab(QWidget):
         recent_layout.addWidget(self._wrap_group("直近戦略イベント", self.recent_events_table))
         recent_layout.addStretch()
 
+        advice_tab = QWidget()
+        advice_layout = QVBoxLayout(advice_tab)
+        self.advice_summary_label = QLabel("総評: ---")
+        self.advice_summary_label.setWordWrap(True)
+        self.advice_summary_label.setStyleSheet("font-size: 14px; font-weight: bold;")
+        advice_layout.addWidget(self._wrap_group("総評", self.advice_summary_label))
+
+        self.advice_scroll = QScrollArea()
+        self.advice_scroll.setWidgetResizable(True)
+        self.advice_container = QWidget()
+        self.advice_cards_layout = QVBoxLayout(self.advice_container)
+        self.advice_cards_layout.setContentsMargins(0, 0, 0, 0)
+        self.advice_cards_layout.setSpacing(10)
+        self.advice_scroll.setWidget(self.advice_container)
+        advice_layout.addWidget(self.advice_scroll)
+
         self.detail_tabs.addTab(decision_tab, "判定・フィルター")
         self.detail_tabs.addTab(performance_tab, "成績分析")
         self.detail_tabs.addTab(recent_tab, "直近イベント")
+        self.detail_tabs.addTab(advice_tab, "AIアドバイス")
         layout.addWidget(self.detail_tabs)
 
     @staticmethod
@@ -184,6 +202,7 @@ class StrategyAnalysisTab(QWidget):
             hour_rows = tl.get_hourly_performance(symbols)
             bucket_rows = tl.get_prediction_bucket_performance(symbols)
             model_rows = tl.get_model_version_performance(symbols)
+            symbol_rows = tl.get_symbol_performance(symbols)
             recent_rows = tl.get_recent_analysis_events(symbols, 20)
             tl.close()
 
@@ -213,6 +232,19 @@ class StrategyAnalysisTab(QWidget):
             self._fill_performance_table(self.prediction_bucket_table, bucket_rows, "bucket")
             self._fill_performance_table(self.model_version_table, model_rows, "model_version")
             self._fill_recent_events_table(recent_rows)
+            self._fill_advice_tab(
+                symbols=symbols,
+                summary=summary,
+                action_rows=action_rows,
+                hold_rows=hold_rows,
+                filter_rows=filter_rows,
+                exit_rows=exit_rows,
+                direction_rows=direction_rows,
+                hour_rows=hour_rows,
+                bucket_rows=bucket_rows,
+                model_rows=model_rows,
+                symbol_rows=symbol_rows,
+            )
 
         except Exception as e:
             log.warning(f"戦略分析タブ更新エラー: {e}")
@@ -232,6 +264,8 @@ class StrategyAnalysisTab(QWidget):
             self.recent_events_table,
         ):
             table.setRowCount(0)
+        self._clear_advice_cards()
+        self.advice_summary_label.setText("総評: ---")
 
     def _fill_action_table(self, rows: list[dict]) -> None:
         self.action_table.setRowCount(len(rows))
@@ -304,3 +338,94 @@ class StrategyAnalysisTab(QWidget):
             self.recent_events_table.setItem(i, 6, QTableWidgetItem(f"{float(row.get('confidence') or 0.0):.3f}"))
             blocked = row.get("blocked_filters") or []
             self.recent_events_table.setItem(i, 7, QTableWidgetItem(", ".join(blocked) if blocked else "---"))
+
+    def _fill_advice_tab(
+        self,
+        *,
+        symbols: list[str],
+        summary: dict,
+        action_rows: list[dict],
+        hold_rows: list[dict],
+        filter_rows: list[dict],
+        exit_rows: list[dict],
+        direction_rows: list[dict],
+        hour_rows: list[dict],
+        bucket_rows: list[dict],
+        model_rows: list[dict],
+        symbol_rows: list[dict],
+    ) -> None:
+        from fxbot.analysis.strategy_advisor import generate_strategy_advice
+
+        overall, advices = generate_strategy_advice(
+            symbols=symbols,
+            summary=summary,
+            action_rows=action_rows,
+            hold_rows=hold_rows,
+            filter_rows=filter_rows,
+            exit_rows=exit_rows,
+            direction_rows=direction_rows,
+            hour_rows=hour_rows,
+            bucket_rows=bucket_rows,
+            model_rows=model_rows,
+            symbol_rows=symbol_rows,
+        )
+
+        self.advice_summary_label.setText(f"総評: {overall}")
+        self._clear_advice_cards()
+
+        if not advices:
+            self.advice_cards_layout.addWidget(self._create_advice_card(
+                severity="info",
+                title="アドバイスなし",
+                message="現時点では表示できる助言がありません。",
+                evidence="データ蓄積後に自動表示されます。",
+            ))
+        else:
+            for advice in advices:
+                self.advice_cards_layout.addWidget(self._create_advice_card(
+                    severity=advice.severity,
+                    title=advice.title,
+                    message=advice.message,
+                    evidence=advice.evidence,
+                ))
+        self.advice_cards_layout.addStretch()
+
+    def _clear_advice_cards(self) -> None:
+        while self.advice_cards_layout.count():
+            item = self.advice_cards_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _create_advice_card(
+        self,
+        *,
+        severity: str,
+        title: str,
+        message: str,
+        evidence: str,
+    ) -> QGroupBox:
+        color_map = {
+            "warn": "#F44336",
+            "good": "#4CAF50",
+            "info": "#2196F3",
+        }
+        color = color_map.get(severity, "#607D8B")
+
+        group = QGroupBox(title)
+        group.setStyleSheet(f"QGroupBox {{ font-weight: bold; border: 1px solid {color}; margin-top: 8px; }}")
+        layout = QVBoxLayout(group)
+
+        severity_label = QLabel(f"重要度: {severity.upper()}")
+        severity_label.setStyleSheet(f"color: {color}; font-weight: bold;")
+        layout.addWidget(severity_label)
+
+        message_label = QLabel(message)
+        message_label.setWordWrap(True)
+        layout.addWidget(message_label)
+
+        evidence_label = QLabel(f"根拠: {evidence}")
+        evidence_label.setWordWrap(True)
+        evidence_label.setStyleSheet("color: gray;")
+        layout.addWidget(evidence_label)
+        return group

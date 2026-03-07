@@ -66,6 +66,7 @@ backtest:
   test_window_days: 30
   initial_balance: 1000000
   spread_pips: 1.5
+  slippage_pips: 0.5
 retraining:
   enabled: true
   interval_hours: 168

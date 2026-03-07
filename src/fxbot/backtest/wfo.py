@@ -94,6 +94,7 @@ def run_wfo(
     multi_tf_data: dict[str, pd.DataFrame],
     settings: Settings,
     base_timeframe: str = "M5",
+    symbol: str | None = None,
 ) -> WFOResult:
     """ウォークフォワード最適化を実行.
 
@@ -124,6 +125,7 @@ def run_wfo(
     folds: list[WFOFold] = []
     all_equities = []
     all_trades = []
+    all_closed_equities = []
 
     fold_num = 0
     cursor = start + pd.Timedelta(days=train_days)
@@ -191,7 +193,7 @@ def run_wfo(
 
         # 5. バックテスト
         engine = BacktestEngine(settings)
-        bt_result = engine.run(test_data, predictions)
+        bt_result = engine.run(test_data, predictions, symbol=symbol)
 
         # メトリクス
         trades_df = pd.DataFrame([{
@@ -203,7 +205,7 @@ def run_wfo(
 
         test_metrics = {}
         if not bt_result.equity.empty:
-            test_metrics = calc_all_metrics(bt_result.equity, trades_df)
+            test_metrics = calc_all_metrics(bt_result.equity, trades_df, bt_result.closed_equity)
 
         folds.append(WFOFold(
             fold_num=fold_num,
@@ -219,6 +221,8 @@ def run_wfo(
         ))
 
         all_equities.append(bt_result.equity)
+        if not bt_result.closed_equity.empty:
+            all_closed_equities.append(bt_result.closed_equity)
         if not trades_df.empty:
             all_trades.append(trades_df)
 
@@ -226,8 +230,9 @@ def run_wfo(
 
     # 結果統合
     combined_equity = _stitch_equity_curves(all_equities)
+    combined_closed_equity = _stitch_equity_curves(all_closed_equities)
     combined_trades = pd.concat(all_trades, ignore_index=True) if all_trades else pd.DataFrame(columns=["pnl"])
-    overall_metrics = calc_all_metrics(combined_equity, combined_trades) if not combined_equity.empty else {}
+    overall_metrics = calc_all_metrics(combined_equity, combined_trades, combined_closed_equity) if not combined_equity.empty else {}
     overall_metrics.update(_summarize_fold_drawdowns(folds))
 
     log.info(f"WFO完了: {len(folds)}フォールド, {len(combined_trades)}トレード")
@@ -244,6 +249,7 @@ def replay_with_threshold(
     wfo_result: WFOResult,
     threshold: float,
     settings: Settings,
+    symbol: str | None = None,
 ) -> tuple[pd.Series, pd.DataFrame]:
     """分類WFO結果を異なる信頼度閾値でエンジンリプレイ.
 
@@ -258,7 +264,7 @@ def replay_with_threshold(
         replay_settings = copy.deepcopy(settings)
         replay_settings.trading.min_prediction_threshold = threshold
         engine = BacktestEngine(replay_settings)
-        bt = engine.run(fold.test_data, fold.raw_predictions)
+        bt = engine.run(fold.test_data, fold.raw_predictions, symbol=symbol)
         if not bt.equity.empty:
             all_equities.append(bt.equity)
         if bt.trades:

@@ -138,7 +138,7 @@ class BacktestWorker(QThread):
             self.signals.progress.emit("WFO実行中...")
 
             from fxbot.backtest.wfo import run_wfo
-            result = run_wfo(multi_tf_data, self.settings)
+            result = run_wfo(multi_tf_data, self.settings, symbol=self.symbol)
 
             from fxbot import notifier as _slack
             _n = _slack.get()
@@ -190,20 +190,20 @@ class ComparisonWorker(QThread):
             self.signals.progress.emit("[比較BT] 回帰WFO実行中 (1/2)...")
             reg_settings = copy.deepcopy(self.settings)
             reg_settings.model.mode = "regression"
-            reg_result = run_wfo(multi_tf_data, reg_settings)
+            reg_result = run_wfo(multi_tf_data, reg_settings, symbol=self.symbol)
 
             # Step 2: 分類WFO (threshold=0で全予測を保存)
             self.signals.progress.emit("[比較BT] 分類WFO実行中 (2/2)...")
             clf_settings = copy.deepcopy(self.settings)
             clf_settings.model.mode = "classification"
             clf_settings.trading.min_prediction_threshold = 0.0
-            clf_result = run_wfo(multi_tf_data, clf_settings)
+            clf_result = run_wfo(multi_tf_data, clf_settings, symbol=self.symbol)
 
             # Step 3: 3閾値リプレイ
             self.signals.progress.emit("[比較BT] 閾値リプレイ中...")
-            eq_055, trades_055 = replay_with_threshold(clf_result, 0.55, self.settings)
-            eq_060, trades_060 = replay_with_threshold(clf_result, 0.60, self.settings)
-            eq_065, trades_065 = replay_with_threshold(clf_result, 0.65, self.settings)
+            eq_055, trades_055 = replay_with_threshold(clf_result, 0.55, self.settings, symbol=self.symbol)
+            eq_060, trades_060 = replay_with_threshold(clf_result, 0.60, self.settings, symbol=self.symbol)
+            eq_065, trades_065 = replay_with_threshold(clf_result, 0.65, self.settings, symbol=self.symbol)
 
             # メトリクス計算
             def _metrics(equity: pd.Series, trades: pd.DataFrame) -> dict:
@@ -250,7 +250,7 @@ class WeekendRetrainWorker(QThread):
             # Step 1: WFO実行
             self.signals.progress.emit("週末自動再学習: WFO実行中...")
             from fxbot.backtest.wfo import run_wfo
-            wfo_result = run_wfo(self.multi_tf_data, self.settings)
+            wfo_result = run_wfo(self.multi_tf_data, self.settings, symbol=self.symbol)
             metrics = wfo_result.overall_metrics if hasattr(wfo_result, "overall_metrics") else {}
 
             wfo_win_rate = metrics.get("win_rate", 0.0)

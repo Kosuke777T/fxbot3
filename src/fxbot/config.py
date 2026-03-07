@@ -81,6 +81,7 @@ class BacktestConfig:
     test_window_days: int = 30
     initial_balance: float = 1_000_000
     spread_pips: float = 1.5
+    slippage_pips: float = 0.5
 
 
 @dataclass

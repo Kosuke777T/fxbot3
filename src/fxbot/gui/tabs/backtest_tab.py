@@ -295,6 +295,8 @@ class BacktestTab(QWidget):
             "total_return":     ("トータルリターン",       lambda v: f"{v*100:.2f}%"),
             "total_pnl":        ("トータル損益",           lambda v: f"¥{v:,.0f}"),
             "sharpe_ratio":     ("シャープレシオ",         lambda v: f"{v:.3f}"),
+            "daily_sharpe_ratio": ("日次シャープレシオ",   lambda v: f"{v:.3f}"),
+            "closed_daily_sharpe_ratio": ("日次シャープレシオ(決済損益)", lambda v: f"{v:.3f}"),
             "sortino_ratio":    ("ソルティノレシオ",       lambda v: f"{v:.3f}"),
             "max_drawdown_pct": ("最大DD",                 lambda v: f"{v*100:.2f}%"),
             "worst_fold_drawdown_pct": ("最悪フォールドDD",  lambda v: f"{v*100:.2f}%"),
@@ -379,6 +381,7 @@ class BacktestTab(QWidget):
         rows = [
             ("トータルリターン",       "total_return",     lambda v: f"{v*100:.2f}%"),
             ("シャープレシオ",         "sharpe_ratio",     lambda v: f"{v:.3f}"),
+            ("日次シャープレシオ",     "daily_sharpe_ratio", lambda v: f"{v:.3f}"),
             ("最大DD",                 "max_drawdown_pct", lambda v: f"{v*100:.2f}%"),
             ("トレード数",             "num_trades",       lambda v: f"{int(v)}"),
             ("勝率",                   "win_rate",         lambda v: f"{v*100:.1f}%"),

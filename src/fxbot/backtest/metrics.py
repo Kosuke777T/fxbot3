@@ -52,15 +52,29 @@ def calc_monthly_returns(equity: pd.Series) -> pd.Series:
     return monthly.pct_change().dropna()
 
 
-def calc_all_metrics(equity: pd.Series, trades: pd.DataFrame) -> dict:
+def calc_daily_returns(equity: pd.Series) -> pd.Series:
+    """日次リターン."""
+    daily = equity.resample("D").last().dropna()
+    return daily.pct_change().dropna()
+
+
+def calc_all_metrics(
+    equity: pd.Series,
+    trades: pd.DataFrame,
+    closed_equity: pd.Series | None = None,
+) -> dict:
     """全メトリクスをまとめて計算."""
     returns = equity.pct_change().dropna()
+    daily_returns = calc_daily_returns(equity)
+    closed_daily_returns = calc_daily_returns(closed_equity) if closed_equity is not None and not closed_equity.empty else pd.Series(dtype=float)
     dd_abs, dd_pct = calc_max_drawdown(equity)
 
     return {
         "total_return": float((equity.iloc[-1] / equity.iloc[0]) - 1),
         "total_pnl": float(equity.iloc[-1] - equity.iloc[0]),
         "sharpe_ratio": calc_sharpe(returns),
+        "daily_sharpe_ratio": calc_sharpe(daily_returns, periods_per_year=252),
+        "closed_daily_sharpe_ratio": calc_sharpe(closed_daily_returns, periods_per_year=252),
         "sortino_ratio": calc_sortino(returns),
         "max_drawdown": dd_abs,
         "max_drawdown_pct": dd_pct,

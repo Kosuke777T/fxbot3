@@ -5,12 +5,12 @@ from __future__ import annotations
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
-    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -40,14 +40,13 @@ class PairSelectionTab(QWidget):
         # --- ペア選択グループ ---
         group = QGroupBox(f"取引通貨ペア（最大{MAX_PAIRS}つ）")
         group_layout = QVBoxLayout(group)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        self._scroll_content = QWidget()
-        self._scroll_layout = QVBoxLayout(self._scroll_content)
-        self._scroll_layout.addStretch()
-        scroll.setWidget(self._scroll_content)
-        group_layout.addWidget(scroll)
+        self._symbols_container = QWidget()
+        self._symbols_layout = QGridLayout(self._symbols_container)
+        self._symbols_layout.setContentsMargins(0, 0, 0, 0)
+        self._symbols_layout.setHorizontalSpacing(24)
+        self._symbols_layout.setVerticalSpacing(8)
+        group_layout.addWidget(self._symbols_container)
+        group_layout.addStretch()
 
         layout.addWidget(group, stretch=1)
 
@@ -72,21 +71,27 @@ class PairSelectionTab(QWidget):
     def set_symbols(self, symbols: list[str]) -> None:
         """利用可能シンボル一覧をセット（main_windowから呼び出し）."""
         active = self.settings.trading.active_symbols
+        columns = 3
 
-        # 既存チェックボックスをクリア（最後のstretchを残す）
-        while self._scroll_layout.count() > 1:
-            item = self._scroll_layout.takeAt(0)
+        # 既存チェックボックスをクリア
+        while self._symbols_layout.count() > 0:
+            item = self._symbols_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
 
         self._checkboxes.clear()
 
-        for sym in symbols:
+        for index, sym in enumerate(symbols):
             cb = QCheckBox(sym)
             cb.setChecked(sym in active)
             cb.toggled.connect(lambda checked, s=sym: self._on_checkbox_toggled(s, checked))
-            self._scroll_layout.insertWidget(self._scroll_layout.count() - 1, cb)
+            row = index // columns
+            col = index % columns
+            self._symbols_layout.addWidget(cb, row, col)
             self._checkboxes[sym] = cb
+
+        for col in range(columns):
+            self._symbols_layout.setColumnStretch(col, 1)
 
         self._update_selected_label()
 

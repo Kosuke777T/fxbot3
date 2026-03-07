@@ -167,6 +167,66 @@ class TradeLogger:
             "sharpe": sharpe,
         }
 
+    def get_symbol_performance(self, symbols: list[str]) -> list[dict]:
+        """指定シンボルごとの成績を集計."""
+        results: list[dict] = []
+
+        for symbol in symbols:
+            summary = self._conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS total_trades,
+                    SUM(CASE WHEN pnl IS NOT NULL THEN 1 ELSE 0 END) AS closed_trades,
+                    SUM(CASE WHEN pnl IS NULL THEN 1 ELSE 0 END) AS open_trades,
+                    SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) AS wins,
+                    COALESCE(SUM(pnl), 0.0) AS total_pnl,
+                    AVG(pnl) AS avg_pnl,
+                    MAX(pnl) AS best_pnl,
+                    MIN(pnl) AS worst_pnl,
+                    AVG(CASE WHEN pnl > 0 THEN pnl END) AS avg_win,
+                    AVG(CASE WHEN pnl < 0 THEN pnl END) AS avg_loss
+                FROM trades
+                WHERE symbol=?
+                """,
+                (symbol,),
+            ).fetchone()
+
+            latest = self._conn.execute(
+                """
+                SELECT direction, exit_reason, pnl, COALESCE(exit_time, timestamp) AS last_time
+                FROM trades
+                WHERE symbol=?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (symbol,),
+            ).fetchone()
+
+            total_trades = int(summary["total_trades"] or 0)
+            closed_trades = int(summary["closed_trades"] or 0)
+            wins = int(summary["wins"] or 0)
+            win_rate = (wins / closed_trades) if closed_trades > 0 else 0.0
+
+            results.append({
+                "symbol": symbol,
+                "total_trades": total_trades,
+                "closed_trades": closed_trades,
+                "open_trades": int(summary["open_trades"] or 0),
+                "win_rate": win_rate,
+                "total_pnl": float(summary["total_pnl"] or 0.0),
+                "avg_pnl": float(summary["avg_pnl"] or 0.0) if summary["avg_pnl"] is not None else None,
+                "best_pnl": float(summary["best_pnl"] or 0.0) if summary["best_pnl"] is not None else None,
+                "worst_pnl": float(summary["worst_pnl"] or 0.0) if summary["worst_pnl"] is not None else None,
+                "avg_win": float(summary["avg_win"] or 0.0) if summary["avg_win"] is not None else None,
+                "avg_loss": float(summary["avg_loss"] or 0.0) if summary["avg_loss"] is not None else None,
+                "last_direction": latest["direction"] if latest else None,
+                "last_exit_reason": latest["exit_reason"] if latest else None,
+                "last_pnl": float(latest["pnl"] or 0.0) if latest and latest["pnl"] is not None else None,
+                "last_time": latest["last_time"] if latest else None,
+            })
+
+        return results
+
     def get_unclosed_trades(self) -> list[dict]:
         """exit_price が NULL の未決済取引を返す（ticket が NULL のものは除く）."""
         cursor = self._conn.execute(

@@ -17,6 +17,7 @@ from fxbot.gui.tabs.shap_tab import ShapTab
 from fxbot.gui.tabs.model_tab import ModelTab
 from fxbot.gui.tabs.market_filter_tab import MarketFilterTab
 from fxbot.gui.tabs.trade_log_tab import TradeLogTab
+from fxbot.gui.tabs.pair_performance_tab import PairPerformanceTab
 from fxbot.gui.tabs.pair_selection_tab import PairSelectionTab
 from fxbot.gui.tabs.batch_train_tab import BatchTrainTab
 from fxbot.gui.widgets.log_widget import LogWidget
@@ -122,6 +123,10 @@ class MainWindow(QMainWindow):
         self.trade_log_tab = TradeLogTab(self.settings)
         self.tabs.addTab(self.trade_log_tab, "取引ログ")
 
+        # 9. 通貨別成績
+        self.pair_performance_tab = PairPerformanceTab(self.settings)
+        self.tabs.addTab(self.pair_performance_tab, "通貨別成績")
+
         splitter.addWidget(self.tabs)
 
         self.log_widget = LogWidget()
@@ -197,6 +202,7 @@ class MainWindow(QMainWindow):
         syms = self.settings.trading.active_symbols
         self.batch_train_tab.refresh_symbols(syms)
         self.market_filter_tab.refresh_symbols(syms)
+        self.pair_performance_tab.refresh_symbols(syms)
 
     # --- ライブ取引制御 ---
 

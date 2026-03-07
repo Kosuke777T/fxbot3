@@ -28,7 +28,8 @@
       "WebFetch(domain:www.mql5.com)",
       "Bash(python3:*)",
       "Bash(sqlite3:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(ls:*)"
     ]
   }
 }

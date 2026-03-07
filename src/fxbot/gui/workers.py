@@ -672,6 +672,7 @@ class TradingWorker(QThread):
                             regime=regime,
                             h4_regime=h4_regime,
                         )
+                        filter_status_payload = [dataclasses.asdict(fs) for fs in filter_statuses]
                         base_tf = self.settings.data.base_timeframe
                         ohlcv_df = data.get(base_tf, pd.DataFrame()).iloc[-100:].copy()
                         any_blocked = (
@@ -682,7 +683,7 @@ class TradingWorker(QThread):
                         hold_ts = datetime.now(timezone.utc).isoformat() if any_blocked else None
                         self.signals.filter_update.emit({
                             "symbol": sym,
-                            "filter_statuses": [dataclasses.asdict(fs) for fs in filter_statuses],
+                            "filter_statuses": filter_status_payload,
                             "ohlcv_df": ohlcv_df,
                             "hold_timestamp": hold_ts,
                         })
@@ -699,56 +700,99 @@ class TradingWorker(QThread):
                         # 予測値にロット情報を付加（ダッシュボード表示用）
                         predictions_this_bar[sym] = {"pred": pred_val, "lot": signal.lot}
 
-                        if signal.action != SignalAction.HOLD and can_open_position(sym, self.settings) and not model_degraded:
-                            result = send_order(
-                                sym, signal.action.value, signal.lot, signal.sl, signal.tp
-                            )
-                            if result:
-                                self.signals.progress.emit(
-                                    f"約定: {signal.action.value.upper()} {sym} "
-                                    f"{signal.lot}lot @ {result['price']}"
+                        position_allowed = True
+                        order_attempted = False
+                        order_success = False
+                        entered = False
+                        skip_reason = signal.hold_reason or ""
+
+                        if signal.action != SignalAction.HOLD:
+                            position_allowed = can_open_position(sym, self.settings)
+                            if model_degraded:
+                                skip_reason = "model_degraded"
+                            elif not position_allowed:
+                                skip_reason = "position_limit"
+                            else:
+                                order_attempted = True
+                                result = send_order(
+                                    sym, signal.action.value, signal.lot, signal.sl, signal.tp
                                 )
-
-                                # Slack エントリー通知
-                                _n = _slack.get()
-                                if _n:
-                                    _n.notify_entry(
-                                        symbol=sym,
-                                        direction=signal.action.value,
-                                        lot=signal.lot,
-                                        price=result["price"],
-                                        sl=signal.sl,
-                                        tp=signal.tp,
-                                        confidence=confidence if predictor.mode == "classification" else None,
+                                if result:
+                                    order_success = True
+                                    entered = True
+                                    skip_reason = ""
+                                    self.signals.progress.emit(
+                                        f"約定: {signal.action.value.upper()} {sym} "
+                                        f"{signal.lot}lot @ {result['price']}"
                                     )
 
-                                # 取引ログ記録
-                                if trade_logger:
-                                    from fxbot.trade_logger import TradeRecord
-                                    record = TradeRecord(
-                                        timestamp=_jst_now(),
-                                        symbol=sym,
-                                        direction=signal.action.value,
-                                        entry_price=result["price"],
-                                        sl=signal.sl,
-                                        tp=signal.tp,
-                                        lot=signal.lot,
-                                        prediction=pred_val,
-                                        confidence=confidence,
-                                        atr=atr,
-                                        balance=balance,
-                                        ticket=result.get("ticket"),
-                                        model_version=meta.get("created_at", "unknown"),
-                                    )
-                                    db_row_id = trade_logger.log_entry(record)
-                                    entry_ticket = result.get("ticket")
-                                    if entry_ticket is not None:
-                                        open_trade_ids[entry_ticket] = db_row_id
-                                        open_trade_info[entry_ticket] = {
-                                            "direction": record.direction,
-                                            "lot": record.lot,
-                                            "entry_price": record.entry_price,
-                                        }
+                                    # Slack エントリー通知
+                                    _n = _slack.get()
+                                    if _n:
+                                        _n.notify_entry(
+                                            symbol=sym,
+                                            direction=signal.action.value,
+                                            lot=signal.lot,
+                                            price=result["price"],
+                                            sl=signal.sl,
+                                            tp=signal.tp,
+                                            confidence=confidence if predictor.mode == "classification" else None,
+                                        )
+
+                                    # 取引ログ記録
+                                    if trade_logger:
+                                        from fxbot.trade_logger import TradeRecord
+                                        record = TradeRecord(
+                                            timestamp=_jst_now(),
+                                            symbol=sym,
+                                            direction=signal.action.value,
+                                            entry_price=result["price"],
+                                            sl=signal.sl,
+                                            tp=signal.tp,
+                                            lot=signal.lot,
+                                            prediction=pred_val,
+                                            confidence=confidence,
+                                            atr=atr,
+                                            balance=balance,
+                                            ticket=result.get("ticket"),
+                                            model_version=meta.get("created_at", "unknown"),
+                                        )
+                                        db_row_id = trade_logger.log_entry(record)
+                                        entry_ticket = result.get("ticket")
+                                        if entry_ticket is not None:
+                                            open_trade_ids[entry_ticket] = db_row_id
+                                            open_trade_info[entry_ticket] = {
+                                                "direction": record.direction,
+                                                "lot": record.lot,
+                                                "entry_price": record.entry_price,
+                                            }
+                                else:
+                                    skip_reason = "order_failed"
+
+                        if trade_logger:
+                            trade_logger.log_analysis_event(
+                                {
+                                    "timestamp": _jst_now(),
+                                    "symbol": sym,
+                                    "model_mode": predictor.mode,
+                                    "action": signal.action.value,
+                                    "hold_reason": signal.hold_reason,
+                                    "prediction": pred_val,
+                                    "confidence": confidence,
+                                    "lot": signal.lot,
+                                    "spread_pips": spread_pips,
+                                    "regime": regime,
+                                    "h4_regime": h4_regime,
+                                    "current_hour_utc": current_hour_utc,
+                                    "position_allowed": position_allowed,
+                                    "model_degraded": model_degraded,
+                                    "order_attempted": order_attempted,
+                                    "order_success": order_success,
+                                    "entered": entered,
+                                    "skip_reason": skip_reason,
+                                },
+                                filter_status_payload,
+                            )
 
                         # チケット集合更新（次バーのクローズ検出用）
                         positions = get_open_positions()

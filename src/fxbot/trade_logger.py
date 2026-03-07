@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import csv
+import json
 import sqlite3
 from dataclasses import asdict, dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -35,6 +35,53 @@ CREATE TABLE IF NOT EXISTS trades (
     model_version TEXT
 )
 """
+
+_CREATE_ANALYSIS_EVENTS_TABLE = """
+CREATE TABLE IF NOT EXISTS analysis_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    model_mode TEXT,
+    action TEXT NOT NULL,
+    hold_reason TEXT,
+    prediction REAL,
+    confidence REAL,
+    lot REAL,
+    spread_pips REAL,
+    regime TEXT,
+    h4_regime TEXT,
+    current_hour_utc INTEGER,
+    blocked_filters TEXT,
+    position_allowed INTEGER NOT NULL DEFAULT 1,
+    model_degraded INTEGER NOT NULL DEFAULT 0,
+    order_attempted INTEGER NOT NULL DEFAULT 0,
+    order_success INTEGER NOT NULL DEFAULT 0,
+    entered INTEGER NOT NULL DEFAULT 0,
+    skip_reason TEXT
+)
+"""
+
+_CREATE_ANALYSIS_FILTERS_TABLE = """
+CREATE TABLE IF NOT EXISTS analysis_filter_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL,
+    timestamp TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    filter_name TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    passed INTEGER NOT NULL DEFAULT 1,
+    reason TEXT,
+    current_value TEXT,
+    threshold_str TEXT
+)
+"""
+
+_CREATE_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_trades_symbol_timestamp ON trades(symbol, timestamp)",
+    "CREATE INDEX IF NOT EXISTS idx_analysis_events_symbol_timestamp ON analysis_events(symbol, timestamp)",
+    "CREATE INDEX IF NOT EXISTS idx_analysis_filter_events_symbol_name ON analysis_filter_events(symbol, filter_name)",
+]
 
 
 @dataclass
@@ -67,8 +114,19 @@ class TradeLogger:
         self._conn = sqlite3.connect(str(self.db_path))
         self._conn.row_factory = sqlite3.Row
         self._conn.execute(_CREATE_TABLE)
+        self._conn.execute(_CREATE_ANALYSIS_EVENTS_TABLE)
+        self._conn.execute(_CREATE_ANALYSIS_FILTERS_TABLE)
+        for query in _CREATE_INDEXES:
+            self._conn.execute(query)
         self._conn.commit()
         log.debug(f"TradeLogger初期化: {self.db_path}")
+
+    @staticmethod
+    def _symbol_clause(symbols: list[str], column: str = "symbol") -> tuple[str, list]:
+        if not symbols:
+            return "", []
+        placeholders = ", ".join(["?"] * len(symbols))
+        return f" WHERE {column} IN ({placeholders})", list(symbols)
 
     def log_entry(self, record: TradeRecord) -> int:
         """エントリーを記録し、レコードIDを返す."""
@@ -130,6 +188,74 @@ class TradeLogger:
             )
         else:
             log.info(f"取引記録[exit]: ticket={ticket} reason={exit_reason} pnl={pnl:.2f}")
+
+    def log_analysis_event(self, event: dict, filter_statuses: list[dict]) -> int:
+        """戦略判定イベントと各フィルター状態を記録."""
+        blocked = [
+            fs.get("filter_name", "")
+            for fs in filter_statuses
+            if fs.get("enabled", False) and not fs.get("passed", True)
+        ]
+        cursor = self._conn.execute(
+            """
+            INSERT INTO analysis_events (
+                timestamp, symbol, model_mode, action, hold_reason,
+                prediction, confidence, lot, spread_pips,
+                regime, h4_regime, current_hour_utc, blocked_filters,
+                position_allowed, model_degraded, order_attempted,
+                order_success, entered, skip_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event.get("timestamp"),
+                event.get("symbol"),
+                event.get("model_mode"),
+                event.get("action"),
+                event.get("hold_reason"),
+                event.get("prediction"),
+                event.get("confidence"),
+                event.get("lot"),
+                event.get("spread_pips"),
+                event.get("regime"),
+                event.get("h4_regime"),
+                event.get("current_hour_utc"),
+                json.dumps(blocked, ensure_ascii=False),
+                int(bool(event.get("position_allowed", True))),
+                int(bool(event.get("model_degraded", False))),
+                int(bool(event.get("order_attempted", False))),
+                int(bool(event.get("order_success", False))),
+                int(bool(event.get("entered", False))),
+                event.get("skip_reason"),
+            ),
+        )
+        event_id = cursor.lastrowid
+
+        rows = []
+        for fs in filter_statuses:
+            rows.append((
+                event_id,
+                event.get("timestamp"),
+                event.get("symbol"),
+                fs.get("filter_name", ""),
+                fs.get("display_name", fs.get("filter_name", "")),
+                int(bool(fs.get("enabled", False))),
+                int(bool(fs.get("passed", True))),
+                fs.get("reason", ""),
+                fs.get("current_value", ""),
+                fs.get("threshold_str", ""),
+            ))
+        if rows:
+            self._conn.executemany(
+                """
+                INSERT INTO analysis_filter_events (
+                    event_id, timestamp, symbol, filter_name, display_name,
+                    enabled, passed, reason, current_value, threshold_str
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+        self._conn.commit()
+        return event_id
 
     def get_recent_trades(self, n: int = 50) -> list[dict]:
         """直近N件の取引を取得."""
@@ -226,6 +352,260 @@ class TradeLogger:
             })
 
         return results
+
+    def get_strategy_summary(self, symbols: list[str]) -> dict:
+        """戦略分析用のサマリーを返す."""
+        where, params = self._symbol_clause(symbols)
+        row = self._conn.execute(
+            f"""
+            SELECT
+                COUNT(*) AS eval_count,
+                SUM(CASE WHEN action='buy' THEN 1 ELSE 0 END) AS buy_count,
+                SUM(CASE WHEN action='sell' THEN 1 ELSE 0 END) AS sell_count,
+                SUM(CASE WHEN action='hold' THEN 1 ELSE 0 END) AS hold_count,
+                SUM(entered) AS entered_count,
+                SUM(CASE WHEN skip_reason='position_limit' THEN 1 ELSE 0 END) AS position_blocked,
+                SUM(CASE WHEN skip_reason='model_degraded' THEN 1 ELSE 0 END) AS model_blocked,
+                SUM(CASE WHEN order_attempted=1 AND order_success=0 THEN 1 ELSE 0 END) AS order_failed
+            FROM analysis_events
+            {where}
+            """,
+            params,
+        ).fetchone()
+        eval_count = int(row["eval_count"] or 0)
+        entered_count = int(row["entered_count"] or 0)
+        return {
+            "eval_count": eval_count,
+            "buy_count": int(row["buy_count"] or 0),
+            "sell_count": int(row["sell_count"] or 0),
+            "hold_count": int(row["hold_count"] or 0),
+            "entered_count": entered_count,
+            "entry_rate": (entered_count / eval_count) if eval_count > 0 else 0.0,
+            "position_blocked": int(row["position_blocked"] or 0),
+            "model_blocked": int(row["model_blocked"] or 0),
+            "order_failed": int(row["order_failed"] or 0),
+        }
+
+    def get_action_breakdown(self, symbols: list[str]) -> list[dict]:
+        """BUY/SELL/HOLD別の判定件数を返す."""
+        where, params = self._symbol_clause(symbols)
+        cursor = self._conn.execute(
+            f"""
+            SELECT
+                action,
+                COUNT(*) AS count,
+                SUM(entered) AS entered_count,
+                SUM(CASE WHEN order_attempted=1 AND order_success=0 THEN 1 ELSE 0 END) AS order_failed
+            FROM analysis_events
+            {where}
+            GROUP BY action
+            ORDER BY count DESC
+            """,
+            params,
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_hold_reason_breakdown(self, symbols: list[str]) -> list[dict]:
+        """HOLD理由別件数を返す."""
+        where, params = self._symbol_clause(symbols)
+        extra = "action='hold'"
+        if where:
+            where = where + f" AND {extra}"
+        else:
+            where = f" WHERE {extra}"
+        cursor = self._conn.execute(
+            f"""
+            SELECT
+                COALESCE(hold_reason, 'other') AS hold_reason,
+                COUNT(*) AS count
+            FROM analysis_events
+            {where}
+            GROUP BY COALESCE(hold_reason, 'other')
+            ORDER BY count DESC, hold_reason
+            """,
+            params,
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_filter_pass_rates(self, symbols: list[str]) -> list[dict]:
+        """フィルター別の通過率を返す."""
+        where, params = self._symbol_clause(symbols)
+        cursor = self._conn.execute(
+            f"""
+            SELECT
+                filter_name,
+                display_name,
+                SUM(CASE WHEN enabled=1 THEN 1 ELSE 0 END) AS enabled_count,
+                SUM(CASE WHEN enabled=1 AND passed=1 THEN 1 ELSE 0 END) AS pass_count,
+                SUM(CASE WHEN enabled=1 AND passed=0 THEN 1 ELSE 0 END) AS block_count
+            FROM analysis_filter_events
+            {where}
+            GROUP BY filter_name, display_name
+            ORDER BY display_name
+            """,
+            params,
+        )
+        results = []
+        for row in cursor.fetchall():
+            enabled_count = int(row["enabled_count"] or 0)
+            pass_count = int(row["pass_count"] or 0)
+            results.append({
+                "filter_name": row["filter_name"],
+                "display_name": row["display_name"],
+                "enabled_count": enabled_count,
+                "pass_count": pass_count,
+                "block_count": int(row["block_count"] or 0),
+                "pass_rate": (pass_count / enabled_count) if enabled_count > 0 else None,
+            })
+        return results
+
+    def get_direction_performance(self, symbols: list[str]) -> list[dict]:
+        """方向別成績を返す."""
+        where, params = self._symbol_clause(symbols)
+        if where:
+            where += " AND pnl IS NOT NULL"
+        else:
+            where = " WHERE pnl IS NOT NULL"
+        cursor = self._conn.execute(
+            f"""
+            SELECT
+                UPPER(direction) AS direction,
+                COUNT(*) AS count,
+                SUM(pnl) AS total_pnl,
+                AVG(pnl) AS avg_pnl,
+                AVG(CASE WHEN pnl > 0 THEN 1.0 ELSE 0.0 END) AS win_rate
+            FROM trades
+            {where}
+            GROUP BY UPPER(direction)
+            ORDER BY count DESC
+            """,
+            params,
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_exit_reason_performance(self, symbols: list[str]) -> list[dict]:
+        """決済理由別成績を返す."""
+        where, params = self._symbol_clause(symbols)
+        if where:
+            where += " AND pnl IS NOT NULL"
+        else:
+            where = " WHERE pnl IS NOT NULL"
+        cursor = self._conn.execute(
+            f"""
+            SELECT
+                COALESCE(exit_reason, 'open') AS exit_reason,
+                COUNT(*) AS count,
+                SUM(pnl) AS total_pnl,
+                AVG(pnl) AS avg_pnl,
+                AVG(CASE WHEN pnl > 0 THEN 1.0 ELSE 0.0 END) AS win_rate
+            FROM trades
+            {where}
+            GROUP BY COALESCE(exit_reason, 'open')
+            ORDER BY count DESC
+            """,
+            params,
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_hourly_performance(self, symbols: list[str]) -> list[dict]:
+        """エントリー時刻の時間帯別成績を返す."""
+        where, params = self._symbol_clause(symbols)
+        if where:
+            where += " AND pnl IS NOT NULL"
+        else:
+            where = " WHERE pnl IS NOT NULL"
+        cursor = self._conn.execute(
+            f"""
+            SELECT
+                substr(timestamp, 12, 2) AS hour_bucket,
+                COUNT(*) AS count,
+                SUM(pnl) AS total_pnl,
+                AVG(pnl) AS avg_pnl,
+                AVG(CASE WHEN pnl > 0 THEN 1.0 ELSE 0.0 END) AS win_rate
+            FROM trades
+            {where}
+            GROUP BY substr(timestamp, 12, 2)
+            ORDER BY hour_bucket
+            """,
+            params,
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_prediction_bucket_performance(self, symbols: list[str]) -> list[dict]:
+        """予測値帯別成績を返す."""
+        where, params = self._symbol_clause(symbols)
+        if where:
+            where += " AND pnl IS NOT NULL"
+        else:
+            where = " WHERE pnl IS NOT NULL"
+        cursor = self._conn.execute(
+            f"""
+            SELECT
+                CASE
+                    WHEN ABS(prediction) < 0.0002 THEN '<0.0002'
+                    WHEN ABS(prediction) < 0.0005 THEN '0.0002-0.0005'
+                    WHEN ABS(prediction) < 0.0010 THEN '0.0005-0.0010'
+                    ELSE '>=0.0010'
+                END AS bucket,
+                COUNT(*) AS count,
+                SUM(pnl) AS total_pnl,
+                AVG(pnl) AS avg_pnl,
+                AVG(CASE WHEN pnl > 0 THEN 1.0 ELSE 0.0 END) AS win_rate
+            FROM trades
+            {where}
+            GROUP BY bucket
+            ORDER BY bucket
+            """,
+            params,
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_model_version_performance(self, symbols: list[str]) -> list[dict]:
+        """モデルバージョン別成績を返す."""
+        where, params = self._symbol_clause(symbols)
+        if where:
+            where += " AND pnl IS NOT NULL"
+        else:
+            where = " WHERE pnl IS NOT NULL"
+        cursor = self._conn.execute(
+            f"""
+            SELECT
+                COALESCE(model_version, 'unknown') AS model_version,
+                COUNT(*) AS count,
+                SUM(pnl) AS total_pnl,
+                AVG(pnl) AS avg_pnl,
+                AVG(CASE WHEN pnl > 0 THEN 1.0 ELSE 0.0 END) AS win_rate
+            FROM trades
+            {where}
+            GROUP BY COALESCE(model_version, 'unknown')
+            ORDER BY count DESC, model_version DESC
+            """,
+            params,
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_recent_analysis_events(self, symbols: list[str], n: int = 20) -> list[dict]:
+        """直近の戦略判定イベントを返す."""
+        where, params = self._symbol_clause(symbols)
+        cursor = self._conn.execute(
+            f"""
+            SELECT
+                timestamp, symbol, action, hold_reason, prediction, confidence,
+                entered, skip_reason, blocked_filters
+            FROM analysis_events
+            {where}
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            [*params, n],
+        )
+        rows = [dict(row) for row in cursor.fetchall()]
+        for row in rows:
+            try:
+                row["blocked_filters"] = json.loads(row["blocked_filters"] or "[]")
+            except json.JSONDecodeError:
+                row["blocked_filters"] = []
+        return rows
 
     def get_unclosed_trades(self) -> list[dict]:
         """exit_price が NULL の未決済取引を返す（ticket が NULL のものは除く）."""

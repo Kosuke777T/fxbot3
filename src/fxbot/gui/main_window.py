@@ -18,6 +18,8 @@ from fxbot.gui.tabs.model_tab import ModelTab
 from fxbot.gui.tabs.market_filter_tab import MarketFilterTab
 from fxbot.gui.tabs.trade_log_tab import TradeLogTab
 from fxbot.gui.tabs.pair_performance_tab import PairPerformanceTab
+from fxbot.gui.tabs.system_analysis_tab import SystemAnalysisTab
+from fxbot.gui.tabs.strategy_analysis_tab import StrategyAnalysisTab
 from fxbot.gui.tabs.pair_selection_tab import PairSelectionTab
 from fxbot.gui.tabs.batch_train_tab import BatchTrainTab
 from fxbot.gui.widgets.log_widget import LogWidget
@@ -46,6 +48,7 @@ class MainWindow(QMainWindow):
         self._update_status_bar()
         self._load_symbols()
         self._setup_retraining_scheduler()
+        self._push_analysis_runtime_state()
 
     def _init_ui(self):
         self.setWindowTitle("FXBot3 — FX自動売買ボット")
@@ -127,6 +130,14 @@ class MainWindow(QMainWindow):
         self.pair_performance_tab = PairPerformanceTab(self.settings)
         self.tabs.addTab(self.pair_performance_tab, "通貨別成績")
 
+        # 10. 全体監視
+        self.system_analysis_tab = SystemAnalysisTab(self.settings)
+        self.tabs.addTab(self.system_analysis_tab, "全体監視")
+
+        # 11. 戦略分析
+        self.strategy_analysis_tab = StrategyAnalysisTab(self.settings)
+        self.tabs.addTab(self.strategy_analysis_tab, "戦略分析")
+
         splitter.addWidget(self.tabs)
 
         self.log_widget = LogWidget()
@@ -203,6 +214,7 @@ class MainWindow(QMainWindow):
         self.batch_train_tab.refresh_symbols(syms)
         self.market_filter_tab.refresh_symbols(syms)
         self.pair_performance_tab.refresh_symbols(syms)
+        self.strategy_analysis_tab.refresh_symbols(syms)
 
     # --- ライブ取引制御 ---
 
@@ -233,6 +245,7 @@ class MainWindow(QMainWindow):
         self.trading_status_label.setStyleSheet(
             "font-size: 14px; padding: 0 10px; color: #4CAF50; font-weight: bold;"
         )
+        self._push_analysis_runtime_state(progress="ライブ取引開始")
         log.info("ライブ取引開始")
 
     def _stop_trading(self):
@@ -240,9 +253,11 @@ class MainWindow(QMainWindow):
         if self.trading_worker:
             self.trading_worker.stop()
             self.trading_status_label.setText("停止処理中...")
+            self._push_analysis_runtime_state(progress="停止処理中...")
 
     def _on_trading_progress(self, msg: str):
         self.trading_status_label.setText(msg)
+        self._push_analysis_runtime_state(progress=msg)
 
     def _on_trading_error(self, msg: str):
         log.error(msg)
@@ -252,12 +267,14 @@ class MainWindow(QMainWindow):
         )
         self.start_trading_btn.setEnabled(True)
         self.stop_trading_btn.setEnabled(False)
+        self._push_analysis_runtime_state(error=msg)
 
     def _on_trading_stopped(self, _result):
         self.start_trading_btn.setEnabled(True)
         self.stop_trading_btn.setEnabled(False)
         self.trading_status_label.setText("停止中")
         self.trading_status_label.setStyleSheet("font-size: 14px; padding: 0 10px;")
+        self._push_analysis_runtime_state(progress="停止中")
         log.info("ライブ取引停止")
 
     # --- 自動再学習スケジューラ ---
@@ -358,6 +375,8 @@ class MainWindow(QMainWindow):
                 self._stop_trading()
 
         self.dashboard_tab.refresh_auto_retrain_result()
+        self.strategy_analysis_tab.refresh()
+        self._push_analysis_runtime_state(progress=f"週末再学習完了: {reason}")
 
     def _count_consecutive_wfo_failures(self) -> int:
         """直近の auto_retrain ログから連続WFO未達回数を数える（最新ログ含む）."""
@@ -378,6 +397,7 @@ class MainWindow(QMainWindow):
     def _on_weekend_retrain_error(self, msg: str):
         """週末再学習エラー."""
         log.error(msg)
+        self._push_analysis_runtime_state(error=msg)
 
     # --- 口座切替・その他 ---
 
@@ -405,6 +425,7 @@ class MainWindow(QMainWindow):
             self.autotrade_status.setText("")
 
         self._update_status_bar()
+        self._push_analysis_runtime_state()
 
     def _on_train_complete(self, result):
         """学習完了時."""
@@ -434,6 +455,7 @@ class MainWindow(QMainWindow):
                     "border-radius: 3px; font-weight: bold;"
                 )
                 log.warning("MT5の自動売買が無効です — ツールバーの「アルゴリズム取引」を有効にしてください")
+            self._push_analysis_runtime_state()
         except Exception:
             pass
 
@@ -452,6 +474,29 @@ class MainWindow(QMainWindow):
                 "background-color: #4CAF50; color: white; padding: 2px 8px; "
                 "border-radius: 3px; font-weight: bold;"
             )
+
+    def _push_analysis_runtime_state(
+        self,
+        *,
+        progress: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """分析タブへ現在の稼働状態を反映."""
+        if not hasattr(self, "system_analysis_tab"):
+            return
+        trading_running = self.trading_worker is not None and self.trading_worker.isRunning()
+        retrain_running = (
+            self.weekend_retrain_worker is not None and self.weekend_retrain_worker.isRunning()
+        )
+        self.system_analysis_tab.update_runtime_snapshot(
+            connection=self.connection_status.text() or "未接続",
+            autotrade=self.autotrade_status.text().strip() or "---",
+            trading=self.trading_status_label.text() or "---",
+            trading_running=trading_running,
+            retrain_running=retrain_running,
+            progress=progress,
+            error=error,
+        )
 
     def closeEvent(self, event):
         """ウィンドウ閉じる時にワーカーを停止."""

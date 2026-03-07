@@ -169,14 +169,14 @@ class MainWindow(QMainWindow):
         self.strategy_analysis_tab.warn_count_changed.connect(self._on_warn_count_changed)
 
     def _on_advice_jump(self, tab_name: str) -> None:
-        """AIアドバイスの「設定を開く」ボタンで対象タブへジャンプ."""
+        """戦略アドバイザーのボタンで対象タブへジャンプ."""
         tab_map = {"market_filter": 7, "settings": 6}
         idx = tab_map.get(tab_name)
         if idx is not None:
             self.tabs.setCurrentIndex(idx)
 
     def _on_warn_count_changed(self, count: int) -> None:
-        """AIアドバイスのwarn件数をタブラベルに反映."""
+        """戦略アドバイザー由来のwarn件数をタブラベルに反映."""
         idx = self.tabs.indexOf(self.strategy_analysis_tab)
         if idx >= 0:
             label = f"戦略分析 ⚠{count}" if count > 0 else "戦略分析"

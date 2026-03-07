@@ -138,7 +138,7 @@ class StrategyAnalysisTab(QWidget):
         self.detail_tabs.addTab(decision_tab, "判定・フィルター")
         self.detail_tabs.addTab(performance_tab, "成績分析")
         self.detail_tabs.addTab(recent_tab, "直近イベント")
-        self.detail_tabs.addTab(advice_tab, "AIアドバイス")
+        self.detail_tabs.addTab(advice_tab, "戦略アドバイザー")
         layout.addWidget(self.detail_tabs)
 
     @staticmethod

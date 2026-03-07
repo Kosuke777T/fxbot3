@@ -371,6 +371,8 @@ class TradingWorker(QThread):
             # TradeLogger & ModelMonitor 初期化
             trade_logger = None
             model_monitor = None
+            run_id = ""
+            _pm = None
             if self.settings.trade_logging.enabled:
                 from fxbot.trade_logger import TradeLogger, TradeRecord
                 from fxbot.model.monitor import ModelMonitor
@@ -413,6 +415,24 @@ class TradingWorker(QThread):
                 return
 
             self.signals.progress.emit(f"取引対象: {list(models.keys())}")
+
+            # プロファイルセッション開始
+            if trade_logger and self.settings.active_profile_id:
+                from fxbot.profile_manager import ProfileManager
+                _pm = ProfileManager(db_path)
+                _first_model_version = ""
+                for _sym, (_pred, _meta) in models.items():
+                    _first_model_version = _meta.get("created_at", "")
+                    break
+                run_id = _pm.start_session(
+                    profile_id=self.settings.active_profile_id,
+                    snapshot_id=self.settings.active_snapshot_id,
+                    run_type="live",
+                    symbols=list(models.keys()),
+                    model_version=_first_model_version,
+                    environment=self.settings.current_account.type,
+                )
+                self.settings.active_run_id = run_id
 
             # クローズ検出用: 前回ループのチケット集合
             prev_tickets: dict[str, set[int]] = {sym: set() for sym in models}
@@ -756,6 +776,9 @@ class TradingWorker(QThread):
                                             balance=balance,
                                             ticket=result.get("ticket"),
                                             model_version=meta.get("created_at", "unknown"),
+                                            profile_id=self.settings.active_profile_id or None,
+                                            snapshot_id=self.settings.active_snapshot_id or None,
+                                            run_id=run_id or None,
                                         )
                                         db_row_id = trade_logger.log_entry(record)
                                         entry_ticket = result.get("ticket")
@@ -790,6 +813,9 @@ class TradingWorker(QThread):
                                     "order_success": order_success,
                                     "entered": entered,
                                     "skip_reason": skip_reason,
+                                    "profile_id": self.settings.active_profile_id or None,
+                                    "snapshot_id": self.settings.active_snapshot_id or None,
+                                    "run_id": run_id or None,
                                 },
                                 filter_status_payload,
                             )
@@ -837,6 +863,10 @@ class TradingWorker(QThread):
 
                 # 次のM5バー確定まで待機（バー境界同期、待機中もトレーリング更新）
                 self._wait_with_trailing_updates(models, last_atr, trailing_activated, tp_triggered)
+
+            if run_id and _pm:
+                _pm.end_session(run_id)
+                _pm.close()
 
             if trade_logger:
                 trade_logger.close()

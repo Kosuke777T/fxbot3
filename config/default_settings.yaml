@@ -1,4 +1,7 @@
 active_account: demo
+active_profile_id: ''
+active_snapshot_id: 0
+active_run_id: ''
 accounts:
   demo:
     server: ''
@@ -44,14 +47,14 @@ risk:
   trailing_tp_enabled: true
 model:
   lgbm_params:
-    objective: regression
-    metric: mae
-    boosting_type: gbdt
-    num_leaves: 63
-    learning_rate: 0.05
-    feature_fraction: 0.8
     bagging_fraction: 0.8
     bagging_freq: 5
+    boosting_type: gbdt
+    feature_fraction: 0.8
+    learning_rate: 0.05
+    metric: mae
+    num_leaves: 63
+    objective: regression
     verbose: -1
   num_boost_round: 1000
   early_stopping_rounds: 50

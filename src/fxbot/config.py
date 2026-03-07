@@ -148,6 +148,9 @@ class SlackNotifierConfig:
 @dataclass
 class Settings:
     active_account: str = "demo"
+    active_profile_id: str = ""
+    active_snapshot_id: int = 0
+    active_run_id: str = ""
     accounts: dict[str, AccountConfig] = field(default_factory=lambda: {
         "demo": AccountConfig(),
         "real": AccountConfig(type="real"),

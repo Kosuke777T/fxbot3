@@ -89,7 +89,7 @@ class StrategyAnalysisTab(QWidget):
         self.prediction_bucket_table = self._create_table(["予測帯", "件数", "合計損益", "平均損益", "勝率"])
         self.model_version_table = self._create_table(["モデル", "件数", "合計損益", "平均損益", "勝率"])
         self.recent_events_table = self._create_table(
-            ["時刻", "シンボル", "判定", "HOLD理由", "見送り理由", "予測値", "信頼度", "ブロックフィルター"]
+            ["時刻", "シンボル", "判定", "HOLD理由", "見送り理由", "予測値", "信頼度", "ブロックフィルター", "プロファイル"]
         )
 
         decision_tab = QWidget()
@@ -332,6 +332,7 @@ class StrategyAnalysisTab(QWidget):
             self.recent_events_table.setItem(i, 6, QTableWidgetItem(f"{float(row.get('confidence') or 0.0):.3f}"))
             blocked = row.get("blocked_filters") or []
             self.recent_events_table.setItem(i, 7, QTableWidgetItem(", ".join(blocked) if blocked else "---"))
+            self.recent_events_table.setItem(i, 8, QTableWidgetItem(str(row.get("profile_id") or "---")))
 
     def _fill_advice_tab(
         self,

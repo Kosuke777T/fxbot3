@@ -6,9 +6,11 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QLabel, QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox,
     QPushButton, QMessageBox, QListWidget, QAbstractItemView, QCheckBox,
-    QTabWidget, QScrollArea,
+    QTabWidget, QScrollArea, QTableWidget, QTableWidgetItem, QHeaderView,
+    QTextEdit,
 )
 from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtGui import QColor, QFont
 
 from fxbot.config import Settings, AccountConfig, save_settings
 from fxbot.logger import get_logger
@@ -36,6 +38,7 @@ class SettingsTab(QWidget):
         sub_tabs.addTab(self._build_model_tab(), "モデル")
         sub_tabs.addTab(self._build_log_tab(), "ログ")
         sub_tabs.addTab(self._build_notification_tab(), "通知")
+        sub_tabs.addTab(self._build_profile_tab(), "プロファイル")
         main_layout.addWidget(sub_tabs)
 
         save_btn = QPushButton("設定保存")
@@ -415,6 +418,298 @@ class SettingsTab(QWidget):
         layout.addStretch()
         scroll.setWidget(page)
         return scroll
+
+    def _build_profile_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+
+        # アクティブプロファイル表示
+        self.active_profile_label = QLabel("アクティブ: (未設定)")
+        self.active_profile_label.setStyleSheet("font-size: 13px; font-weight: bold; color: #4CAF50;")
+        layout.addWidget(self.active_profile_label)
+
+        # 上部: テーブル + 詳細パネル
+        split = QHBoxLayout()
+
+        # 左: プロファイル一覧
+        left = QVBoxLayout()
+        left.addWidget(QLabel("保存済みプロファイル:"))
+        self.profile_table = QTableWidget()
+        self.profile_table.setColumnCount(4)
+        self.profile_table.setHorizontalHeaderLabels(["名前", "作成日", "説明", "状態"])
+        self.profile_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.profile_table.setAlternatingRowColors(True)
+        self.profile_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.profile_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.profile_table.verticalHeader().setVisible(False)
+        self.profile_table.setMinimumHeight(180)
+        self.profile_table.itemSelectionChanged.connect(self._on_profile_selected)
+        left.addWidget(self.profile_table)
+        split.addLayout(left, 3)
+
+        # 右: 詳細パネル
+        right = QVBoxLayout()
+        right.addWidget(QLabel("詳細:"))
+        self.profile_detail_text = QTextEdit()
+        self.profile_detail_text.setReadOnly(True)
+        self.profile_detail_text.setMaximumHeight(180)
+        right.addWidget(self.profile_detail_text)
+
+        detail_btn_row = QHBoxLayout()
+        self.profile_apply_btn = QPushButton("適用")
+        self.profile_apply_btn.clicked.connect(self._on_profile_apply)
+        self.profile_apply_btn.setEnabled(False)
+        detail_btn_row.addWidget(self.profile_apply_btn)
+
+        self.profile_clone_btn = QPushButton("複製")
+        self.profile_clone_btn.clicked.connect(self._on_profile_clone)
+        self.profile_clone_btn.setEnabled(False)
+        detail_btn_row.addWidget(self.profile_clone_btn)
+
+        self.profile_archive_btn = QPushButton("アーカイブ")
+        self.profile_archive_btn.clicked.connect(self._on_profile_archive)
+        self.profile_archive_btn.setEnabled(False)
+        detail_btn_row.addWidget(self.profile_archive_btn)
+        right.addLayout(detail_btn_row)
+
+        split.addLayout(right, 2)
+        layout.addLayout(split)
+
+        # 下部: 新規保存
+        save_group = QGroupBox("現在の設定を新規プロファイルとして保存")
+        save_layout = QFormLayout()
+
+        self.new_profile_name_edit = QLineEdit()
+        self.new_profile_name_edit.setPlaceholderText("例: baseline_v1")
+        save_layout.addRow("プロファイル名:", self.new_profile_name_edit)
+
+        self.new_profile_desc_edit = QLineEdit()
+        self.new_profile_desc_edit.setPlaceholderText("例: 初期安定設定")
+        save_layout.addRow("説明:", self.new_profile_desc_edit)
+
+        self.profile_save_new_btn = QPushButton("現在の設定を保存")
+        self.profile_save_new_btn.clicked.connect(self._on_profile_save_new)
+        save_layout.addRow(self.profile_save_new_btn)
+
+        save_group.setLayout(save_layout)
+        layout.addWidget(save_group)
+
+        layout.addStretch()
+        self._refresh_profile_table()
+        return page
+
+    def _get_db_path(self):
+        from pathlib import Path
+        from fxbot.config import _PROJECT_ROOT
+        return _PROJECT_ROOT / self.settings.trade_logging.db_path
+
+    def _refresh_profile_table(self) -> None:
+        try:
+            from fxbot.profile_manager import ProfileManager
+            pm = ProfileManager(self._get_db_path())
+            profiles = pm.load_profiles(include_archived=True)
+            pm.close()
+        except Exception as e:
+            log.warning(f"プロファイル一覧取得失敗: {e}")
+            return
+
+        self._profiles_cache = profiles
+        self.profile_table.setRowCount(len(profiles))
+        active_pid = self.settings.active_profile_id
+
+        for i, p in enumerate(profiles):
+            name_item = QTableWidgetItem(p.get("name", ""))
+            is_active = p.get("profile_id") == active_pid
+            is_archived = bool(p.get("is_archived"))
+
+            if is_active:
+                name_item.setForeground(QColor("#4CAF50"))
+                bold = QFont()
+                bold.setBold(True)
+                name_item.setFont(bold)
+            if is_archived:
+                italic = QFont()
+                italic.setItalic(True)
+                name_item.setFont(italic)
+                name_item.setForeground(QColor("#888888"))
+
+            created = (p.get("created_at") or "")[:10]
+            desc = p.get("description") or ""
+            status = "アクティブ" if is_active else ("アーカイブ" if is_archived else "")
+
+            self.profile_table.setItem(i, 0, name_item)
+            self.profile_table.setItem(i, 1, QTableWidgetItem(created))
+            self.profile_table.setItem(i, 2, QTableWidgetItem(desc))
+            self.profile_table.setItem(i, 3, QTableWidgetItem(status))
+
+        if active_pid:
+            active_name = next(
+                (p["name"] for p in profiles if p["profile_id"] == active_pid), active_pid
+            )
+            self.active_profile_label.setText(f"アクティブ: {active_name}")
+        else:
+            self.active_profile_label.setText("アクティブ: (未設定)")
+
+    def _on_profile_selected(self) -> None:
+        rows = self.profile_table.selectedItems()
+        has_sel = bool(rows)
+        self.profile_apply_btn.setEnabled(has_sel)
+        self.profile_clone_btn.setEnabled(has_sel)
+        self.profile_archive_btn.setEnabled(has_sel)
+
+        if not has_sel:
+            self.profile_detail_text.clear()
+            return
+
+        idx = self.profile_table.currentRow()
+        profiles = getattr(self, "_profiles_cache", [])
+        if idx >= len(profiles):
+            return
+        p = profiles[idx]
+
+        import json
+        settings_dict = {}
+        try:
+            if p.get("settings_json"):
+                settings_dict = json.loads(p["settings_json"])
+        except Exception:
+            pass
+
+        # キー抜粋表示
+        lines = [
+            f"名前: {p.get('name', '')}",
+            f"説明: {p.get('description', '')}",
+            f"作成日: {(p.get('created_at') or '')[:19]}",
+            f"更新日: {(p.get('updated_at') or '')[:19]}",
+            "---",
+        ]
+        for section in ("trading", "risk", "market_filter"):
+            sub = settings_dict.get(section, {})
+            if sub:
+                lines.append(f"[{section}]")
+                for k, v in sub.items():
+                    lines.append(f"  {k}: {v}")
+        self.profile_detail_text.setPlainText("\n".join(lines))
+
+    def _on_profile_save_new(self) -> None:
+        name = self.new_profile_name_edit.text().strip()
+        if not name:
+            QMessageBox.warning(self, "プロファイル保存", "プロファイル名を入力してください。")
+            return
+        desc = self.new_profile_desc_edit.text().strip()
+
+        try:
+            from fxbot.profile_manager import ProfileManager
+            pm = ProfileManager(self._get_db_path())
+            profile_id, snapshot_id = pm.save_profile(name, desc, self.settings)
+            pm.close()
+        except Exception as e:
+            QMessageBox.warning(self, "プロファイル保存", f"保存に失敗しました:\n{e}")
+            return
+
+        self.settings.active_profile_id = profile_id
+        self.settings.active_snapshot_id = snapshot_id
+        save_settings(self.settings)
+        self.settings_changed.emit()
+        self._refresh_profile_table()
+        self.new_profile_name_edit.clear()
+        self.new_profile_desc_edit.clear()
+        QMessageBox.information(self, "プロファイル保存", f"プロファイル「{name}」を保存しました。")
+        log.info(f"プロファイル新規保存: {name} ({profile_id})")
+
+    def _on_profile_apply(self) -> None:
+        idx = self.profile_table.currentRow()
+        profiles = getattr(self, "_profiles_cache", [])
+        if idx >= len(profiles):
+            return
+        p = profiles[idx]
+        snapshot_id = p.get("snapshot_id")
+        if snapshot_id is None:
+            QMessageBox.warning(self, "適用", "スナップショットが見つかりません。")
+            return
+
+        try:
+            from fxbot.profile_manager import ProfileManager
+            pm = ProfileManager(self._get_db_path())
+            pm.apply_profile(snapshot_id, self.settings)
+            pm.close()
+        except Exception as e:
+            QMessageBox.warning(self, "適用", f"適用に失敗しました:\n{e}")
+            return
+
+        self.settings.active_profile_id = p["profile_id"]
+        self.settings.active_snapshot_id = snapshot_id
+        save_settings(self.settings)
+        self._load_settings()
+        self.settings_changed.emit()
+        self._refresh_profile_table()
+        QMessageBox.information(self, "適用", f"プロファイル「{p['name']}」を適用しました。")
+        log.info(f"プロファイル適用: {p['name']} snapshot_id={snapshot_id}")
+
+    def _on_profile_clone(self) -> None:
+        idx = self.profile_table.currentRow()
+        profiles = getattr(self, "_profiles_cache", [])
+        if idx >= len(profiles):
+            return
+        p = profiles[idx]
+        snapshot_id = p.get("snapshot_id")
+        if snapshot_id is None:
+            QMessageBox.warning(self, "複製", "スナップショットが見つかりません。")
+            return
+
+        new_name = f"{p['name']}_copy"
+        try:
+            from fxbot.profile_manager import ProfileManager
+            import json
+            pm = ProfileManager(self._get_db_path())
+            snap_dict = pm.get_snapshot(snapshot_id)
+
+            # スナップショットの設定を一時的に適用して保存
+            from fxbot.config import Settings
+            import dataclasses
+            tmp = dataclasses.replace(self.settings)
+            pm.apply_profile(snapshot_id, tmp)
+
+            new_pid, new_sid = pm.save_profile(
+                new_name, f"{p.get('description', '')} (複製)",
+                tmp, base_profile_id=p["profile_id"],
+            )
+            pm.close()
+        except Exception as e:
+            QMessageBox.warning(self, "複製", f"複製に失敗しました:\n{e}")
+            return
+
+        self._refresh_profile_table()
+        QMessageBox.information(self, "複製", f"「{new_name}」として複製しました。")
+        log.info(f"プロファイル複製: {p['name']} → {new_name} ({new_pid})")
+
+    def _on_profile_archive(self) -> None:
+        idx = self.profile_table.currentRow()
+        profiles = getattr(self, "_profiles_cache", [])
+        if idx >= len(profiles):
+            return
+        p = profiles[idx]
+
+        reply = QMessageBox.question(
+            self, "アーカイブ確認",
+            f"プロファイル「{p['name']}」をアーカイブしますか？\n（一覧から非表示になりますが削除はされません）",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            from fxbot.profile_manager import ProfileManager
+            pm = ProfileManager(self._get_db_path())
+            pm.archive_profile(p["profile_id"])
+            pm.close()
+        except Exception as e:
+            QMessageBox.warning(self, "アーカイブ", f"失敗しました:\n{e}")
+            return
+
+        self._refresh_profile_table()
+        log.info(f"プロファイルアーカイブ: {p['name']}")
 
     def _on_webhook_toggle(self, checked: bool) -> None:
         if checked:

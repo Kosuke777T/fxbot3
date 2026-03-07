@@ -83,6 +83,15 @@ _CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_analysis_filter_events_symbol_name ON analysis_filter_events(symbol, filter_name)",
 ]
 
+_ALTER_MIGRATIONS = [
+    "ALTER TABLE trades ADD COLUMN profile_id TEXT",
+    "ALTER TABLE trades ADD COLUMN snapshot_id INTEGER",
+    "ALTER TABLE trades ADD COLUMN run_id TEXT",
+    "ALTER TABLE analysis_events ADD COLUMN profile_id TEXT",
+    "ALTER TABLE analysis_events ADD COLUMN snapshot_id INTEGER",
+    "ALTER TABLE analysis_events ADD COLUMN run_id TEXT",
+]
+
 
 @dataclass
 class TradeRecord:
@@ -103,6 +112,9 @@ class TradeRecord:
     pnl: Optional[float] = None
     ticket: Optional[int] = None
     model_version: Optional[str] = None
+    profile_id: Optional[str] = None
+    snapshot_id: Optional[int] = None
+    run_id: Optional[str] = None
 
 
 class TradeLogger:
@@ -119,7 +131,24 @@ class TradeLogger:
         for query in _CREATE_INDEXES:
             self._conn.execute(query)
         self._conn.commit()
+        self._run_migrations()
         log.debug(f"TradeLogger初期化: {self.db_path}")
+
+    def _run_migrations(self) -> None:
+        """新規テーブル作成 + 既存テーブルへの冪等カラム追加."""
+        from fxbot.profile_manager import (
+            _CREATE_SETTINGS_PROFILES, _CREATE_SETTINGS_SNAPSHOTS,
+            _CREATE_RUN_SESSIONS, _CREATE_PROFILE_PERFORMANCE_SUMMARY,
+        )
+        for sql in [_CREATE_SETTINGS_PROFILES, _CREATE_SETTINGS_SNAPSHOTS,
+                    _CREATE_RUN_SESSIONS, _CREATE_PROFILE_PERFORMANCE_SUMMARY]:
+            self._conn.execute(sql)
+        for alter in _ALTER_MIGRATIONS:
+            try:
+                self._conn.execute(alter)
+            except sqlite3.OperationalError:
+                pass
+        self._conn.commit()
 
     @staticmethod
     def _symbol_clause(symbols: list[str], column: str = "symbol") -> tuple[str, list]:
@@ -203,8 +232,9 @@ class TradeLogger:
                 prediction, confidence, lot, spread_pips,
                 regime, h4_regime, current_hour_utc, blocked_filters,
                 position_allowed, model_degraded, order_attempted,
-                order_success, entered, skip_reason
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                order_success, entered, skip_reason,
+                profile_id, snapshot_id, run_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event.get("timestamp"),
@@ -226,6 +256,9 @@ class TradeLogger:
                 int(bool(event.get("order_success", False))),
                 int(bool(event.get("entered", False))),
                 event.get("skip_reason"),
+                event.get("profile_id"),
+                event.get("snapshot_id"),
+                event.get("run_id"),
             ),
         )
         event_id = cursor.lastrowid
@@ -591,7 +624,7 @@ class TradeLogger:
             f"""
             SELECT
                 timestamp, symbol, action, hold_reason, prediction, confidence,
-                entered, skip_reason, blocked_filters
+                entered, skip_reason, blocked_filters, profile_id
             FROM analysis_events
             {where}
             ORDER BY id DESC

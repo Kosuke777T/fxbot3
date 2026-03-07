@@ -22,6 +22,7 @@ from fxbot.gui.tabs.system_analysis_tab import SystemAnalysisTab
 from fxbot.gui.tabs.strategy_analysis_tab import StrategyAnalysisTab
 from fxbot.gui.tabs.pair_selection_tab import PairSelectionTab
 from fxbot.gui.tabs.batch_train_tab import BatchTrainTab
+from fxbot.gui.tabs.settings_analysis_tab import SettingsAnalysisTab
 from fxbot.gui.widgets.log_widget import LogWidget
 from fxbot.gui.workers import TradingWorker, WeekendRetrainWorker
 from fxbot.logger import get_logger
@@ -138,6 +139,10 @@ class MainWindow(QMainWindow):
         self.strategy_analysis_tab = StrategyAnalysisTab(self.settings)
         self.tabs.addTab(self.strategy_analysis_tab, "戦略分析")
 
+        # 12. 設定分析
+        self.settings_analysis_tab = SettingsAnalysisTab(self.settings)
+        self.tabs.addTab(self.settings_analysis_tab, "設定分析")
+
         splitter.addWidget(self.tabs)
 
         self.log_widget = LogWidget()
@@ -167,6 +172,8 @@ class MainWindow(QMainWindow):
         self.model_tab.on_train_complete = self._on_train_complete
         self.strategy_analysis_tab.jump_requested.connect(self._on_advice_jump)
         self.strategy_analysis_tab.warn_count_changed.connect(self._on_warn_count_changed)
+        self.settings_analysis_tab.apply_profile_requested.connect(self._on_apply_profile)
+        self.settings_analysis_tab.clone_and_edit_requested.connect(self._on_clone_profile)
 
     def _on_advice_jump(self, tab_name: str) -> None:
         """戦略アドバイザーのボタンで対象タブへジャンプ."""
@@ -174,6 +181,44 @@ class MainWindow(QMainWindow):
         idx = tab_map.get(tab_name)
         if idx is not None:
             self.tabs.setCurrentIndex(idx)
+
+    def _on_apply_profile(self, profile_id: str, snapshot_id: int) -> None:
+        """設定分析タブからのプロファイル適用."""
+        if not self.settings.trade_logging.enabled:
+            return
+        from fxbot.config import _PROJECT_ROOT, save_settings
+        from fxbot.profile_manager import ProfileManager
+        db_path = _PROJECT_ROOT / self.settings.trade_logging.db_path
+        pm = ProfileManager(db_path)
+        pm.apply_profile(snapshot_id, self.settings)
+        pm.close()
+        self.settings.active_profile_id = profile_id
+        self.settings.active_snapshot_id = snapshot_id
+        save_settings(self.settings)
+        self._on_settings_changed()
+        self._on_symbols_changed()
+        self.tabs.setCurrentIndex(self.tabs.indexOf(self.settings_tab))
+
+    def _on_clone_profile(self, profile_id: str, snapshot_id: int) -> None:
+        """設定分析タブからのプロファイル複製→設定タブへジャンプ."""
+        if not self.settings.trade_logging.enabled:
+            return
+        from fxbot.config import _PROJECT_ROOT, save_settings
+        from fxbot.profile_manager import ProfileManager
+        import dataclasses
+        db_path = _PROJECT_ROOT / self.settings.trade_logging.db_path
+        pm = ProfileManager(db_path)
+        tmp = dataclasses.replace(self.settings)
+        pm.apply_profile(snapshot_id, tmp)
+        new_name = f"clone_{profile_id[:8]}"
+        new_pid, new_sid = pm.save_profile(new_name, "(複製)", tmp, base_profile_id=profile_id)
+        pm.close()
+        self.settings.active_profile_id = new_pid
+        self.settings.active_snapshot_id = new_sid
+        save_settings(self.settings)
+        self._on_settings_changed()
+        self._on_symbols_changed()
+        self.tabs.setCurrentIndex(self.tabs.indexOf(self.settings_tab))
 
     def _on_warn_count_changed(self, count: int) -> None:
         """戦略アドバイザー由来のwarn件数をタブラベルに反映."""

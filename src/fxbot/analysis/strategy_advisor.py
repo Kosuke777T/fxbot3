@@ -11,6 +11,7 @@ class StrategyAdvice:
     title: str
     message: str
     evidence: str
+    action_tab: str | None = None  # "market_filter" | "settings" | None
 
 
 def generate_strategy_advice(
@@ -26,6 +27,7 @@ def generate_strategy_advice(
     bucket_rows: list[dict],
     model_rows: list[dict],
     symbol_rows: list[dict],
+    prev_summary: dict | None = None,
 ) -> tuple[str, list[StrategyAdvice]]:
     """既存集計結果から戦略アドバイスを生成."""
     advices: list[StrategyAdvice] = []
@@ -53,14 +55,22 @@ def generate_strategy_advice(
     if eval_count >= 20 and entry_rate < 0.10:
         top_hold = _top_row(hold_rows, "count")
         if top_hold:
+            delta_str = ""
+            if prev_summary is not None:
+                prev_rate = float(prev_summary.get("entry_rate", 0.0) or 0.0)
+                delta = entry_rate - prev_rate
+                if abs(delta) > 0.001:
+                    arrow = "↑" if delta > 0 else "↓"
+                    delta_str = f"（前回比 {arrow} {delta:+.1%}）"
             advices.append(StrategyAdvice(
                 severity="warn",
                 title="HOLDが多くエントリー率が低いです",
                 message="フィルターや閾値が厳しすぎて、チャンスを取り逃している可能性があります。",
                 evidence=(
-                    f"約定率 {entry_rate:.1%} / HOLD {hold_count}件 / "
+                    f"約定率 {entry_rate:.1%}{delta_str} / HOLD {hold_count}件 / "
                     f"最多HOLD理由 {top_hold.get('hold_reason', 'unknown')} ({int(top_hold.get('count', 0) or 0)}件)"
                 ),
+                action_tab="market_filter",
             ))
 
     filter_row = _top_block_filter(filter_rows)
@@ -75,6 +85,7 @@ def generate_strategy_advice(
                     f"有効 {int(filter_row.get('enabled_count', 0) or 0)}回 / "
                     f"通過率 {pass_rate:.1%} / ブロック {int(filter_row.get('block_count', 0) or 0)}回"
                 ),
+                action_tab="settings",
             ))
 
     if len(direction_rows) >= 2:

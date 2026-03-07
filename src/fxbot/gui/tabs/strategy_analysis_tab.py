@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QGroupBox,
@@ -27,10 +27,14 @@ log = get_logger(__name__)
 class StrategyAnalysisTab(QWidget):
     """売買戦略の判断と成績を分析するタブ."""
 
+    jump_requested = Signal(str)    # "market_filter" | "settings"
+    warn_count_changed = Signal(int)
+
     def __init__(self, settings: Settings, parent=None):
         super().__init__(parent)
         self.settings = settings
         self._active_symbols: list[str] = list(settings.trading.active_symbols)
+        self._prev_summary: dict | None = None
         self._init_ui()
 
         self._timer = QTimer(self)
@@ -128,19 +132,8 @@ class StrategyAnalysisTab(QWidget):
 
         advice_tab = QWidget()
         advice_layout = QVBoxLayout(advice_tab)
-        self.advice_summary_label = QLabel("総評: ---")
-        self.advice_summary_label.setWordWrap(True)
-        self.advice_summary_label.setStyleSheet("font-size: 14px; font-weight: bold;")
-        advice_layout.addWidget(self._wrap_group("総評", self.advice_summary_label))
-
-        self.advice_scroll = QScrollArea()
-        self.advice_scroll.setWidgetResizable(True)
-        self.advice_container = QWidget()
-        self.advice_cards_layout = QVBoxLayout(self.advice_container)
-        self.advice_cards_layout.setContentsMargins(0, 0, 0, 0)
-        self.advice_cards_layout.setSpacing(10)
-        self.advice_scroll.setWidget(self.advice_container)
-        advice_layout.addWidget(self.advice_scroll)
+        self.advice_inner_tabs = QTabWidget()
+        advice_layout.addWidget(self.advice_inner_tabs)
 
         self.detail_tabs.addTab(decision_tab, "判定・フィルター")
         self.detail_tabs.addTab(performance_tab, "成績分析")
@@ -244,7 +237,9 @@ class StrategyAnalysisTab(QWidget):
                 bucket_rows=bucket_rows,
                 model_rows=model_rows,
                 symbol_rows=symbol_rows,
+                db_path=db_path,
             )
+            self._prev_summary = dict(summary)
 
         except Exception as e:
             log.warning(f"戦略分析タブ更新エラー: {e}")
@@ -264,8 +259,7 @@ class StrategyAnalysisTab(QWidget):
             self.recent_events_table,
         ):
             table.setRowCount(0)
-        self._clear_advice_cards()
-        self.advice_summary_label.setText("総評: ---")
+        self._clear_advice_inner_tabs()
 
     def _fill_action_table(self, rows: list[dict]) -> None:
         self.action_table.setRowCount(len(rows))
@@ -353,9 +347,13 @@ class StrategyAnalysisTab(QWidget):
         bucket_rows: list[dict],
         model_rows: list[dict],
         symbol_rows: list[dict],
+        db_path,
     ) -> None:
         from fxbot.analysis.strategy_advisor import generate_strategy_advice
 
+        self._clear_advice_inner_tabs()
+
+        # --- 全体タブ ---
         overall, advices = generate_strategy_advice(
             symbols=symbols,
             summary=summary,
@@ -368,32 +366,92 @@ class StrategyAnalysisTab(QWidget):
             bucket_rows=bucket_rows,
             model_rows=model_rows,
             symbol_rows=symbol_rows,
+            prev_summary=self._prev_summary,
         )
+        panel, summary_lbl, cards_layout = self._make_advice_panel()
+        self._populate_advice_panel(summary_lbl, cards_layout, overall, advices)
+        self.advice_inner_tabs.addTab(panel, "全体")
 
-        self.advice_summary_label.setText(f"総評: {overall}")
-        self._clear_advice_cards()
+        warn_count = sum(1 for a in advices if a.severity == "warn")
 
+        # --- ペア別タブ ---
+        if len(symbols) > 1:
+            try:
+                from fxbot.trade_logger import TradeLogger
+                tl = TradeLogger(db_path)
+                for sym in symbols:
+                    sym_summary = tl.get_strategy_summary([sym])
+                    sym_overall, sym_advices = generate_strategy_advice(
+                        symbols=[sym],
+                        summary=sym_summary,
+                        action_rows=tl.get_action_breakdown([sym]),
+                        hold_rows=tl.get_hold_reason_breakdown([sym]),
+                        filter_rows=tl.get_filter_pass_rates([sym]),
+                        exit_rows=tl.get_exit_reason_performance([sym]),
+                        direction_rows=tl.get_direction_performance([sym]),
+                        hour_rows=tl.get_hourly_performance([sym]),
+                        bucket_rows=tl.get_prediction_bucket_performance([sym]),
+                        model_rows=tl.get_model_version_performance([sym]),
+                        symbol_rows=tl.get_symbol_performance([sym]),
+                    )
+                    sym_panel, sym_lbl, sym_cards = self._make_advice_panel()
+                    self._populate_advice_panel(sym_lbl, sym_cards, sym_overall, sym_advices)
+                    self.advice_inner_tabs.addTab(sym_panel, sym)
+                tl.close()
+            except Exception as e:
+                log.warning(f"ペア別アドバイス生成エラー: {e}")
+
+        self.warn_count_changed.emit(warn_count)
+
+    def _make_advice_panel(self) -> tuple[QWidget, QLabel, QVBoxLayout]:
+        """総評ラベル + カードスクロールエリアを含むパネルを生成."""
+        panel = QWidget()
+        v = QVBoxLayout(panel)
+        summary_lbl = QLabel("総評: ---")
+        summary_lbl.setWordWrap(True)
+        summary_lbl.setStyleSheet("font-size: 14px; font-weight: bold;")
+        v.addWidget(self._wrap_group("総評", summary_lbl))
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        container = QWidget()
+        cards_layout = QVBoxLayout(container)
+        cards_layout.setContentsMargins(0, 0, 0, 0)
+        cards_layout.setSpacing(10)
+        scroll.setWidget(container)
+        v.addWidget(scroll)
+        return panel, summary_lbl, cards_layout
+
+    def _populate_advice_panel(
+        self,
+        summary_lbl: QLabel,
+        cards_layout: QVBoxLayout,
+        overall: str,
+        advices: list,
+    ) -> None:
+        summary_lbl.setText(f"総評: {overall}")
         if not advices:
-            self.advice_cards_layout.addWidget(self._create_advice_card(
+            cards_layout.addWidget(self._create_advice_card(
                 severity="info",
                 title="アドバイスなし",
                 message="現時点では表示できる助言がありません。",
                 evidence="データ蓄積後に自動表示されます。",
+                action_tab=None,
             ))
         else:
             for advice in advices:
-                self.advice_cards_layout.addWidget(self._create_advice_card(
+                cards_layout.addWidget(self._create_advice_card(
                     severity=advice.severity,
                     title=advice.title,
                     message=advice.message,
                     evidence=advice.evidence,
+                    action_tab=advice.action_tab,
                 ))
-        self.advice_cards_layout.addStretch()
+        cards_layout.addStretch()
 
-    def _clear_advice_cards(self) -> None:
-        while self.advice_cards_layout.count():
-            item = self.advice_cards_layout.takeAt(0)
-            widget = item.widget()
+    def _clear_advice_inner_tabs(self) -> None:
+        while self.advice_inner_tabs.count():
+            widget = self.advice_inner_tabs.widget(0)
+            self.advice_inner_tabs.removeTab(0)
             if widget is not None:
                 widget.deleteLater()
 
@@ -404,6 +462,7 @@ class StrategyAnalysisTab(QWidget):
         title: str,
         message: str,
         evidence: str,
+        action_tab: str | None = None,
     ) -> QGroupBox:
         color_map = {
             "warn": "#F44336",
@@ -428,4 +487,13 @@ class StrategyAnalysisTab(QWidget):
         evidence_label.setWordWrap(True)
         evidence_label.setStyleSheet("color: gray;")
         layout.addWidget(evidence_label)
+
+        if action_tab is not None:
+            label_map = {"market_filter": "市場フィルターを開く", "settings": "設定を開く"}
+            btn_label = label_map.get(action_tab, "設定を開く")
+            btn = QPushButton(btn_label)
+            btn.setStyleSheet(f"QPushButton {{ color: {color}; border: 1px solid {color}; padding: 2px 8px; }}")
+            btn.clicked.connect(lambda: self.jump_requested.emit(action_tab))
+            layout.addWidget(btn)
+
         return group

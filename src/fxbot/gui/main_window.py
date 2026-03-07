@@ -165,6 +165,22 @@ class MainWindow(QMainWindow):
         self.settings_tab.settings_changed.connect(self._on_symbols_changed)
         self.pair_selection_tab.settings_changed.connect(self._on_symbols_changed)
         self.model_tab.on_train_complete = self._on_train_complete
+        self.strategy_analysis_tab.jump_requested.connect(self._on_advice_jump)
+        self.strategy_analysis_tab.warn_count_changed.connect(self._on_warn_count_changed)
+
+    def _on_advice_jump(self, tab_name: str) -> None:
+        """AIアドバイスの「設定を開く」ボタンで対象タブへジャンプ."""
+        tab_map = {"market_filter": 7, "settings": 6}
+        idx = tab_map.get(tab_name)
+        if idx is not None:
+            self.tabs.setCurrentIndex(idx)
+
+    def _on_warn_count_changed(self, count: int) -> None:
+        """AIアドバイスのwarn件数をタブラベルに反映."""
+        idx = self.tabs.indexOf(self.strategy_analysis_tab)
+        if idx >= 0:
+            label = f"戦略分析 ⚠{count}" if count > 0 else "戦略分析"
+            self.tabs.setTabText(idx, label)
 
     def _load_symbols(self):
         """保存済みシンボルをタブに設定。未保存の場合はMT5から自動検出."""

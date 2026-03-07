@@ -1,6 +1,8 @@
-"""バックテストタブ — WFO単体 / 比較バックテスト をサブタブで分離."""
+"""バックテストタブ — WFO単体 / 比較BT + プロファイル選択."""
 
 from __future__ import annotations
+
+import copy
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
@@ -27,7 +29,9 @@ class BacktestTab(QWidget):
         self.worker = None
         self.comparison_worker = None
         self.multi_tf_data = None
+        self._profiles_cache: list[dict] = []
         self._init_ui()
+        self.refresh_profiles()
 
     # ------------------------------------------------------------------ #
     #  UI 構築                                                             #
@@ -40,6 +44,16 @@ class BacktestTab(QWidget):
         self.symbol_combo = QComboBox()
         ctrl.addWidget(QLabel("シンボル:"))
         ctrl.addWidget(self.symbol_combo)
+
+        self.profile_combo = QComboBox()
+        self.profile_combo.setToolTip("WFO/比較バックテストで使用する設定プロファイル")
+        ctrl.addWidget(QLabel("プロファイル:"))
+        ctrl.addWidget(self.profile_combo)
+
+        self.refresh_profiles_btn = QPushButton("更新")
+        self.refresh_profiles_btn.clicked.connect(self.refresh_profiles)
+        ctrl.addWidget(self.refresh_profiles_btn)
+
         self.status_label = QLabel("待機中")
         ctrl.addWidget(self.status_label)
         ctrl.addStretch()
@@ -64,15 +78,35 @@ class BacktestTab(QWidget):
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
-        # エクイティ / ドローダウン
+        self.wfo_detail_tabs = QTabWidget()
+        self.wfo_detail_tabs.addTab(self._build_wfo_chart_page(), "グラフ")
+        self.wfo_detail_tabs.addTab(self._build_wfo_metrics_page(), "パフォーマンス指標")
+        self.wfo_detail_tabs.addTab(self._build_wfo_trades_page(), "トレード一覧")
+        layout.addWidget(self.wfo_detail_tabs)
+
+        return w
+
+    def _build_wfo_chart_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+
+        hint = QLabel("グラフをダブルクリックすると別窓で拡大表示します。")
+        hint.setStyleSheet("color: gray;")
+        layout.addWidget(hint)
+
         splitter = QSplitter(Qt.Orientation.Vertical)
         self.equity_chart = ChartWidget(figsize=(10, 4))
         self.dd_chart = ChartWidget(figsize=(10, 3))
         splitter.addWidget(self.equity_chart)
         splitter.addWidget(self.dd_chart)
+        splitter.setSizes([420, 280])
         layout.addWidget(splitter)
+        return page
 
-        # メトリクス表
+    def _build_wfo_metrics_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+
         metrics_group = QGroupBox("パフォーマンス指標")
         mg_layout = QVBoxLayout()
         self.metrics_table = QTableWidget()
@@ -84,8 +118,12 @@ class BacktestTab(QWidget):
         mg_layout.addWidget(self.metrics_table)
         metrics_group.setLayout(mg_layout)
         layout.addWidget(metrics_group)
+        return page
 
-        # トレード一覧
+    def _build_wfo_trades_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+
         trades_group = QGroupBox("トレード一覧")
         tg_layout = QVBoxLayout()
         self.trades_table = QTableWidget()
@@ -99,8 +137,7 @@ class BacktestTab(QWidget):
         tg_layout.addWidget(self.trades_table)
         trades_group.setLayout(tg_layout)
         layout.addWidget(trades_group)
-
-        return w
+        return page
 
     # ── 比較バックテスト タブ ──────────────────────────────────────────
     def _build_comparison_tab(self) -> QWidget:
@@ -142,6 +179,72 @@ class BacktestTab(QWidget):
     def set_multi_tf_data(self, data: dict):
         self.multi_tf_data = data
 
+    def refresh_profiles(self) -> None:
+        """実行に使える設定プロファイル一覧を読み込む."""
+        current_snapshot_id = self.settings.active_snapshot_id
+        current_text = self.profile_combo.currentText() if hasattr(self, "profile_combo") else ""
+        self.profile_combo.clear()
+        self.profile_combo.addItem("現在の設定", None)
+        self._profiles_cache = []
+
+        try:
+            from fxbot.config import _PROJECT_ROOT
+            from fxbot.profile_manager import ProfileManager
+
+            db_path = _PROJECT_ROOT / self.settings.trade_logging.db_path
+            pm = ProfileManager(db_path)
+            profiles = pm.load_profiles(include_archived=False)
+            pm.close()
+        except Exception as e:
+            log.warning(f"バックテスト用プロファイル一覧取得失敗: {e}")
+            return
+
+        self._profiles_cache = profiles
+        selected_index = 0
+
+        for idx, profile in enumerate(profiles, start=1):
+            version_no = profile.get("version_no")
+            version_suffix = f" v{version_no}" if version_no else ""
+            label = f"{profile.get('name', '(無名)')}{version_suffix}"
+            self.profile_combo.addItem(label, idx - 1)
+
+            if profile.get("snapshot_id") == current_snapshot_id:
+                selected_index = idx
+            elif label == current_text and selected_index == 0:
+                selected_index = idx
+
+        self.profile_combo.setCurrentIndex(selected_index)
+
+    def _build_run_settings(self) -> tuple[Settings, str]:
+        """選択されたプロファイルを一時適用した実行用 settings を返す."""
+        run_settings = copy.deepcopy(self.settings)
+        profile_idx = self.profile_combo.currentData()
+        profile_label = self.profile_combo.currentText() or "現在の設定"
+
+        if profile_idx is None:
+            return run_settings, profile_label
+
+        try:
+            profile = self._profiles_cache[int(profile_idx)]
+            snapshot_id = profile.get("snapshot_id")
+            if snapshot_id is None:
+                return run_settings, profile_label
+
+            from fxbot.config import _PROJECT_ROOT
+            from fxbot.profile_manager import ProfileManager
+
+            db_path = _PROJECT_ROOT / self.settings.trade_logging.db_path
+            pm = ProfileManager(db_path)
+            pm.apply_profile(snapshot_id, run_settings)
+            pm.close()
+
+            run_settings.active_profile_id = profile.get("profile_id", "")
+            run_settings.active_snapshot_id = snapshot_id
+            return run_settings, profile_label
+        except Exception as e:
+            log.warning(f"バックテスト実行用プロファイル適用失敗: {e}")
+            return run_settings, "現在の設定"
+
     # ------------------------------------------------------------------ #
     #  WFO                                                                 #
     # ------------------------------------------------------------------ #
@@ -152,9 +255,10 @@ class BacktestTab(QWidget):
             return
 
         self.run_btn.setEnabled(False)
-        self.status_label.setText(f"データ取得+WFO実行中... ({symbol})")
+        run_settings, profile_label = self._build_run_settings()
+        self.status_label.setText(f"データ取得+WFO実行中... ({symbol} / {profile_label})")
 
-        self.worker = BacktestWorker(symbol, self.settings)
+        self.worker = BacktestWorker(symbol, run_settings)
         self.worker.signals.progress.connect(self._on_progress)
         self.worker.signals.finished.connect(self._on_wfo_finished)
         self.worker.signals.error.connect(self._on_wfo_error)
@@ -193,6 +297,8 @@ class BacktestTab(QWidget):
             "sharpe_ratio":     ("シャープレシオ",         lambda v: f"{v:.3f}"),
             "sortino_ratio":    ("ソルティノレシオ",       lambda v: f"{v:.3f}"),
             "max_drawdown_pct": ("最大DD",                 lambda v: f"{v*100:.2f}%"),
+            "worst_fold_drawdown_pct": ("最悪フォールドDD",  lambda v: f"{v*100:.2f}%"),
+            "avg_fold_drawdown_pct": ("平均フォールドDD",   lambda v: f"{v*100:.2f}%"),
             "num_trades":       ("トレード数",             lambda v: f"{v}"),
             "win_rate":         ("勝率",                   lambda v: f"{v*100:.1f}%"),
             "profit_factor":    ("プロフィットファクター", lambda v: f"{v:.2f}"),
@@ -241,9 +347,10 @@ class BacktestTab(QWidget):
             return
 
         self.compare_btn.setEnabled(False)
-        self.status_label.setText(f"[比較BT] {symbol} データ取得中...")
+        run_settings, profile_label = self._build_run_settings()
+        self.status_label.setText(f"[比較BT] {symbol} データ取得中... ({profile_label})")
 
-        self.comparison_worker = ComparisonWorker(symbol, self.settings)
+        self.comparison_worker = ComparisonWorker(symbol, run_settings)
         self.comparison_worker.signals.progress.connect(self._on_progress)
         self.comparison_worker.signals.finished.connect(self._on_comparison_finished)
         self.comparison_worker.signals.error.connect(self._on_comparison_error)

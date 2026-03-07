@@ -18,7 +18,18 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from matplotlib.ticker import FuncFormatter
 
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import QDialog, QLabel, QVBoxLayout, QWidget
+
+
+class InteractiveFigureCanvas(FigureCanvas):
+    """ダブルクリック通知付き FigureCanvas."""
+
+    double_clicked = Signal()
+
+    def mouseDoubleClickEvent(self, event):
+        self.double_clicked.emit()
+        super().mouseDoubleClickEvent(event)
 
 
 class ChartWidget(QWidget):
@@ -30,15 +41,47 @@ class ChartWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self.figure = Figure(figsize=figsize, dpi=100)
-        self.canvas = FigureCanvas(self.figure)
+        self.canvas = InteractiveFigureCanvas(self.figure)
+        self.canvas.double_clicked.connect(self._open_zoom_dialog)
         layout.addWidget(self.canvas)
+        self._last_plot_renderer = None
+        self._dialog_title = "チャート"
 
     def clear(self):
         self.figure.clear()
+        self._last_plot_renderer = None
+        self._dialog_title = "チャート"
         self.canvas.draw()
+
+    def _remember_plot(self, title: str, renderer) -> None:
+        self._dialog_title = title
+        self._last_plot_renderer = renderer
+
+    def _open_zoom_dialog(self) -> None:
+        """現在のチャートを別窓で大きく表示."""
+        if self._last_plot_renderer is None:
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(self._dialog_title)
+        dialog.resize(1200, 800)
+
+        layout = QVBoxLayout(dialog)
+        hint = QLabel("ダブルクリックしたグラフを拡大表示しています。")
+        layout.addWidget(hint)
+
+        zoom_chart = ChartWidget(dialog, figsize=(14, 8))
+        layout.addWidget(zoom_chart)
+        self._last_plot_renderer(zoom_chart)
+        dialog.exec()
 
     def plot_equity(self, equity_series, initial_balance: float = 1_000_000):
         """エクイティカーブを描画."""
+        equity_copy = equity_series.copy()
+        self._remember_plot(
+            "資金曲線",
+            lambda target: target.plot_equity(equity_copy, initial_balance),
+        )
         self.figure.clear()
         ax = self.figure.add_subplot(111)
         ax.plot(equity_series.index, equity_series.values, color="#2196F3", linewidth=1)
@@ -68,6 +111,14 @@ class ChartWidget(QWidget):
     ) -> None:
         """複数エクイティカーブを1グラフに重ねて描画."""
         import pandas as pd
+        curves_copy = {
+            label: equity.copy() if equity is not None else equity
+            for label, equity in equity_curves.items()
+        }
+        self._remember_plot(
+            title,
+            lambda target: target.plot_multi_equity(curves_copy, initial_balance, title),
+        )
         self.figure.clear()
         ax = self.figure.add_subplot(111)
         colors = ["#9E9E9E", "#03A9F4", "#4CAF50", "#FF9800"]
@@ -88,6 +139,11 @@ class ChartWidget(QWidget):
 
     def plot_shap_importance(self, importance_df, top_n=20):
         """SHAP特徴量重要度を描画."""
+        importance_copy = importance_df.copy()
+        self._remember_plot(
+            "SHAP重要度",
+            lambda target: target.plot_shap_importance(importance_copy, top_n),
+        )
         self.figure.clear()
         ax = self.figure.add_subplot(111)
 
@@ -100,6 +156,11 @@ class ChartWidget(QWidget):
 
     def plot_drawdown(self, equity_series):
         """ドローダウンを描画."""
+        equity_copy = equity_series.copy()
+        self._remember_plot(
+            "ドローダウン",
+            lambda target: target.plot_drawdown(equity_copy),
+        )
         self.figure.clear()
         ax = self.figure.add_subplot(111)
 
@@ -126,6 +187,12 @@ class ChartWidget(QWidget):
             hold_timestamps: HOLDが発生したバーの ISO 文字列タイムスタンプリスト
             symbol: シンボル名（タイトル表示用）
         """
+        df_copy = df.copy() if df is not None else df
+        hold_copy = list(hold_timestamps) if hold_timestamps else None
+        self._remember_plot(
+            f"{symbol} ローソク足" if symbol else "ローソク足",
+            lambda target: target.plot_candlestick(df_copy, hold_copy, symbol),
+        )
         self.figure.clear()
 
         if df is None or df.empty:

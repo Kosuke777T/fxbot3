@@ -38,8 +38,8 @@ trading:
   - USDJPY-
 risk:
   max_risk_per_trade: 0.02
-  atr_sl_multiplier: 1.5
-  atr_tp_multiplier: 1.5
+  atr_sl_multiplier: 2.0
+  atr_tp_multiplier: 3.0
   trailing_atr_multiplier: 1.0
   trailing_activation_atr: 0.5
   trailing_update_interval: 15

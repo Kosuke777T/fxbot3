@@ -41,6 +41,55 @@ class WFOResult:
     overall_metrics: dict
 
 
+def _stitch_equity_curves(equities: list[pd.Series]) -> pd.Series:
+    """各フォールドの資産曲線を累積接続して1本の系列にする.
+
+    単純連結すると各フォールドの初期残高リセットが偽のDDとして見えてしまうため、
+    先行フォールド終値に合わせて後続フォールドを平行移動する。
+    """
+    if not equities:
+        return pd.Series(dtype=float)
+
+    stitched: list[pd.Series] = []
+    cumulative_end: float | None = None
+
+    for equity in equities:
+        if equity.empty:
+            continue
+
+        curve = equity.copy()
+        if cumulative_end is not None:
+            curve = curve + (cumulative_end - float(curve.iloc[0]))
+
+        cumulative_end = float(curve.iloc[-1])
+        stitched.append(curve)
+
+    return pd.concat(stitched) if stitched else pd.Series(dtype=float)
+
+
+def _summarize_fold_drawdowns(folds: list[WFOFold]) -> dict[str, float]:
+    """各フォールドDDの要約統計を返す."""
+    dd_pcts = [
+        float(fold.test_metrics["max_drawdown_pct"])
+        for fold in folds
+        if fold.test_metrics and fold.test_metrics.get("max_drawdown_pct") is not None
+    ]
+    dd_abs = [
+        float(fold.test_metrics["max_drawdown"])
+        for fold in folds
+        if fold.test_metrics and fold.test_metrics.get("max_drawdown") is not None
+    ]
+    if not dd_pcts:
+        return {}
+
+    return {
+        "worst_fold_drawdown_pct": min(dd_pcts),
+        "avg_fold_drawdown_pct": sum(dd_pcts) / len(dd_pcts),
+        "worst_fold_drawdown": min(dd_abs) if dd_abs else 0.0,
+        "avg_fold_drawdown": sum(dd_abs) / len(dd_abs) if dd_abs else 0.0,
+    }
+
+
 def run_wfo(
     multi_tf_data: dict[str, pd.DataFrame],
     settings: Settings,
@@ -176,9 +225,10 @@ def run_wfo(
         cursor += pd.Timedelta(days=test_days)
 
     # 結果統合
-    combined_equity = pd.concat(all_equities) if all_equities else pd.Series(dtype=float)
+    combined_equity = _stitch_equity_curves(all_equities)
     combined_trades = pd.concat(all_trades, ignore_index=True) if all_trades else pd.DataFrame(columns=["pnl"])
     overall_metrics = calc_all_metrics(combined_equity, combined_trades) if not combined_equity.empty else {}
+    overall_metrics.update(_summarize_fold_drawdowns(folds))
 
     log.info(f"WFO完了: {len(folds)}フォールド, {len(combined_trades)}トレード")
 

@@ -466,6 +466,7 @@ class MainWindow(QMainWindow):
         """設定保存後に SlackNotifier を再初期化."""
         from fxbot import notifier as slack
         slack.configure(self.settings.slack)
+        self.backtest_tab.refresh_profiles()
 
     def _on_account_changed(self, account_name: str):
         """口座切替時の処理."""

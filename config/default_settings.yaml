@@ -36,12 +36,12 @@ trading:
 risk:
   max_risk_per_trade: 0.02
   atr_sl_multiplier: 1.5
-  atr_tp_multiplier: 2.0
+  atr_tp_multiplier: 1.5
   trailing_atr_multiplier: 1.0
-  trailing_activation_atr: 2.0
-  trailing_update_interval: 60
+  trailing_activation_atr: 0.5
+  trailing_update_interval: 15
   trailing_sl_enabled: true
-  trailing_tp_enabled: false
+  trailing_tp_enabled: true
 model:
   lgbm_params:
     objective: regression

@@ -824,24 +824,7 @@ class TradingWorker(QThread):
                     if pos["symbol"] != sym:
                         continue
 
-                    # TP側トレーリング: 価格がTPを越えたらMT5のTPを外す
-                    if risk_cfg.trailing_tp_enabled:
-                        if pos["type"] == "buy" and pos["tp"] > 0 and pos["price_current"] >= pos["tp"]:
-                            ok = modify_position(pos["ticket"], tp=0.0)
-                            if ok:
-                                tp_triggered.add(pos["ticket"])
-                                log.info(f"TP側トレーリング発動: {sym} ticket={pos['ticket']} tp解除")
-                            else:
-                                log.warning(f"TP側トレーリング失敗: {sym} ticket={pos['ticket']} tp解除")
-                        elif pos["type"] == "sell" and pos["tp"] > 0 and pos["price_current"] <= pos["tp"]:
-                            ok = modify_position(pos["ticket"], tp=0.0)
-                            if ok:
-                                tp_triggered.add(pos["ticket"])
-                                log.info(f"TP側トレーリング発動: {sym} ticket={pos['ticket']} tp解除")
-                            else:
-                                log.warning(f"TP側トレーリング失敗: {sym} ticket={pos['ticket']} tp解除")
-
-                    # SL側トレーリング
+                    # SL側トレーリング（TP連動）
                     if risk_cfg.trailing_sl_enabled:
                         stops = StopLevels(
                             sl=pos["sl"], tp=pos["tp"],
@@ -853,15 +836,27 @@ class TradingWorker(QThread):
                             pos["price_open"], pos["sl"], stops,
                         )
                         if new_sl is not None:
-                            # ティックサイズ正規化後に現在SLと同値なら送信しない
                             new_sl_norm = normalize_price(sym, new_sl)
-                            if new_sl_norm == normalize_price(sym, pos["sl"]):
+                            old_sl_norm = normalize_price(sym, pos["sl"])
+                            if new_sl_norm == old_sl_norm:
                                 log.debug(f"トレーリングSL変化なし（正規化後同値）: {sym} ticket={pos['ticket']} sl={new_sl_norm}")
                             else:
-                                ok = modify_position(pos["ticket"], sl=new_sl_norm)
+                                # TP連動: SL移動量と同じだけTPも移動
+                                new_tp_norm = None
+                                if risk_cfg.trailing_tp_enabled and pos["tp"] > 0:
+                                    sl_shift = new_sl_norm - old_sl_norm
+                                    new_tp_raw = pos["tp"] + sl_shift
+                                    new_tp_norm = normalize_price(sym, new_tp_raw)
+
+                                ok = modify_position(
+                                    pos["ticket"],
+                                    sl=new_sl_norm,
+                                    tp=new_tp_norm,
+                                )
                                 if ok:
                                     trailing_activated.add(pos["ticket"])
-                                    log.info(f"トレーリングSL更新成功: {sym} ticket={pos['ticket']} new_sl={new_sl_norm}")
+                                    tp_msg = f" new_tp={new_tp_norm}" if new_tp_norm is not None else ""
+                                    log.info(f"トレーリングSL更新成功: {sym} ticket={pos['ticket']} new_sl={new_sl_norm}{tp_msg}")
                                 else:
                                     log.warning(f"トレーリングSL更新失敗: {sym} ticket={pos['ticket']} new_sl={new_sl_norm}")
             except Exception as e:

@@ -321,7 +321,7 @@ def generate_signal(
         trailing_distance=stops.trailing_distance,
     )
 
-    log.info(f"シグナル生成: {signal.action.value.upper()} {symbol} "
-             f"pred={prediction:.6f} conf={confidence:.4f} lot={lot} "
-             f"SL={stops.sl:.5f} TP={stops.tp:.5f} regime={regime} h4={h4_regime}")
+    log.debug(f"シグナル生成: {signal.action.value.upper()} {symbol} "
+              f"pred={prediction:.6f} conf={confidence:.4f} lot={lot} "
+              f"SL={stops.sl:.5f} TP={stops.tp:.5f} regime={regime} h4={h4_regime}")
     return signal

@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
-    QScrollArea,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -73,10 +73,7 @@ class StrategyAnalysisTab(QWidget):
         summary_layout.addStretch()
         layout.addWidget(summary_group)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        content = QWidget()
-        content_layout = QVBoxLayout(content)
+        self.detail_tabs = QTabWidget()
 
         self.action_table = self._create_table(["判定", "件数", "約定数", "注文失敗"])
         self.hold_reason_table = self._create_table(["HOLD理由", "件数"])
@@ -90,31 +87,61 @@ class StrategyAnalysisTab(QWidget):
             ["時刻", "シンボル", "判定", "HOLD理由", "見送り理由", "予測値", "信頼度", "ブロックフィルター"]
         )
 
-        content_layout.addWidget(self._wrap_group("判定内訳", self.action_table))
-        content_layout.addWidget(self._wrap_group("HOLD理由", self.hold_reason_table))
-        content_layout.addWidget(self._wrap_group("フィルター通過率", self.filter_table))
-        content_layout.addWidget(self._wrap_group("決済理由別成績", self.exit_reason_table))
-        content_layout.addWidget(self._wrap_group("BUY/SELL別成績", self.direction_table))
-        content_layout.addWidget(self._wrap_group("時間帯別成績", self.hour_table))
-        content_layout.addWidget(self._wrap_group("予測値帯別成績", self.prediction_bucket_table))
-        content_layout.addWidget(self._wrap_group("モデル別成績", self.model_version_table))
-        content_layout.addWidget(self._wrap_group("直近戦略イベント", self.recent_events_table))
-        content_layout.addStretch()
+        decision_tab = QWidget()
+        decision_layout = QVBoxLayout(decision_tab)
+        decision_layout.addWidget(self._wrap_group("判定内訳", self.action_table))
+        decision_layout.addWidget(self._wrap_group("HOLD理由", self.hold_reason_table))
+        decision_layout.addWidget(self._wrap_group("フィルター通過率", self.filter_table))
+        decision_layout.addStretch()
 
-        scroll.setWidget(content)
-        layout.addWidget(scroll)
+        performance_tab = QWidget()
+        performance_layout = QVBoxLayout(performance_tab)
+        self.performance_tabs = QTabWidget()
+
+        exit_perf_tab = QWidget()
+        exit_perf_layout = QVBoxLayout(exit_perf_tab)
+        exit_perf_layout.addWidget(self._wrap_group("決済理由別成績", self.exit_reason_table))
+        exit_perf_layout.addWidget(self._wrap_group("BUY/SELL別成績", self.direction_table))
+        exit_perf_layout.addStretch()
+
+        timing_perf_tab = QWidget()
+        timing_perf_layout = QVBoxLayout(timing_perf_tab)
+        timing_perf_layout.addWidget(self._wrap_group("時間帯別成績", self.hour_table))
+        timing_perf_layout.addWidget(self._wrap_group("予測値帯別成績", self.prediction_bucket_table))
+        timing_perf_layout.addStretch()
+
+        model_perf_tab = QWidget()
+        model_perf_layout = QVBoxLayout(model_perf_tab)
+        model_perf_layout.addWidget(self._wrap_group("モデル別成績", self.model_version_table))
+        model_perf_layout.addStretch()
+
+        self.performance_tabs.addTab(exit_perf_tab, "出口・方向")
+        self.performance_tabs.addTab(timing_perf_tab, "時間帯・予測値")
+        self.performance_tabs.addTab(model_perf_tab, "モデル別")
+        performance_layout.addWidget(self.performance_tabs)
+
+        recent_tab = QWidget()
+        recent_layout = QVBoxLayout(recent_tab)
+        recent_layout.addWidget(self._wrap_group("直近戦略イベント", self.recent_events_table))
+        recent_layout.addStretch()
+
+        self.detail_tabs.addTab(decision_tab, "判定・フィルター")
+        self.detail_tabs.addTab(performance_tab, "成績分析")
+        self.detail_tabs.addTab(recent_tab, "直近イベント")
+        layout.addWidget(self.detail_tabs)
 
     @staticmethod
     def _create_table(headers: list[str]) -> QTableWidget:
         table = QTableWidget()
         table.setColumnCount(len(headers))
         table.setHorizontalHeaderLabels(headers)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        table.horizontalHeader().setStretchLastSection(True)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         table.setAlternatingRowColors(True)
         table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        table.setMaximumHeight(220)
+        table.verticalHeader().setVisible(False)
+        table.setWordWrap(False)
+        table.setMinimumHeight(220)
         return table
 
     @staticmethod
